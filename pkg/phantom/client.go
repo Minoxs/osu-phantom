@@ -32,6 +32,10 @@ type (
 		OnNewScores func([]NewScore)
 		ranking     player.Ranking
 		LastUpdate  time.Time
+		// WindowStart is the fixed instant tracking began. LastUpdate advances to
+		// the newest score seen, but WindowStart never moves, so pushed scores are
+		// judged against the opt-in moment rather than a sliding watermark.
+		WindowStart time.Time
 
 		lock sync.Mutex
 	}
@@ -46,6 +50,7 @@ func Login(provider AuthProvider, username string, start time.Time) (client *Cli
 	client = &Client{Username: username, Provider: provider}
 	client.UserID, err = osu.GetUserID(provider.GetToken(), client.Username)
 	client.LastUpdate = start
+	client.WindowStart = start
 	client.Logger = slog.Default().With("Username", username)
 
 	// API only returns error if request failed.
@@ -67,11 +72,12 @@ func Login(provider AuthProvider, username string, start time.Time) (client *Cli
 // skipping the username lookup Login performs. Scores set after start are tracked.
 func NewClient(provider AuthProvider, userID int, username string, start time.Time) *Client {
 	return &Client{
-		UserID:     userID,
-		Username:   username,
-		Provider:   provider,
-		LastUpdate: start,
-		Logger:     slog.Default().With("Username", username),
+		UserID:      userID,
+		Username:    username,
+		Provider:    provider,
+		LastUpdate:  start,
+		WindowStart: start,
+		Logger:      slog.Default().With("Username", username),
 	}
 }
 
@@ -151,6 +157,33 @@ func (c *Client) Update() bool {
 		c.LastUpdate = newest
 	}
 	return newest.After(prev)
+}
+
+// Ingest folds a single externally-sourced score into the ranking, for callers
+// that receive scores from a push stream instead of polling. Unlike Update it
+// issues no osu! API request: it trusts the score's PP as given and only counts
+// plays set after WindowStart, so anything predating the tracking window is
+// ignored. Deduplication by score and beatmap is handled by the ranking, so
+// re-delivering a score is harmless. Returns the score's rank and whether it
+// entered the ranking.
+func (c *Client) Ingest(score player.Score) (rank int, added bool) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if !score.CreatedAt.After(c.WindowStart) {
+		return 0, false
+	}
+
+	rank, added = c.ranking.AddScore(score)
+	if !added {
+		return rank, false
+	}
+
+	c.Logger.Info("Ingested score", "ID", score.ID, "BeatmapID", score.Beatmap.ID, "Title", score.BeatmapSet.Title, "PP", score.PP)
+	if c.OnNewScores != nil {
+		go c.OnNewScores([]NewScore{{Rank: rank, Score: score}})
+	}
+	return rank, true
 }
 
 // Ranking safely returns client ranking.

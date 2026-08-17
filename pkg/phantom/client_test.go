@@ -72,6 +72,42 @@ func TestClient_Ranking(t *testing.T) {
 	}
 }
 
+func TestClient_Ingest(t *testing.T) {
+	var counted = make(chan int, 4)
+
+	var test = &Client{
+		Logger:      slog.Default(),
+		WindowStart: time.Now(),
+		OnNewScores: func(scores []NewScore) {
+			counted <- len(scores)
+		},
+	}
+
+	// A play set before the window opened is ignored.
+	before := player.Score{ID: 10, PP: 100, CreatedAt: test.WindowStart.Add(-time.Minute), Beatmap: player.Beatmap{ID: 1}}
+	if _, added := test.Ingest(before); added {
+		t.Fatal("score predating the window should not count")
+	}
+
+	// A play set after the window opened enters the ranking.
+	inside := player.Score{ID: 11, PP: 100, CreatedAt: test.WindowStart.Add(time.Minute), Beatmap: player.Beatmap{ID: 1}}
+	if _, added := test.Ingest(inside); !added {
+		t.Fatal("score inside the window should count")
+	}
+	if n := <-counted; n != 1 {
+		t.Fatalf("callback should report one new score, got %d", n)
+	}
+
+	// Re-delivering the same score is a harmless no-op.
+	if _, added := test.Ingest(inside); added {
+		t.Fatal("re-delivered score should not count twice")
+	}
+
+	if got := test.Ranking().Count(); got != 1 {
+		t.Fatalf("expected 1 ranked score, got %d", got)
+	}
+}
+
 func BenchmarkClient_FoldPage(b *testing.B) {
 	var test = &Client{
 		Logger: slog.Default(),
