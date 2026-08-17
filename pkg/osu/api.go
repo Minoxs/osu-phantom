@@ -167,6 +167,54 @@ func GetBeatmapScores(token *GuestToken, userID int, beatmapID int) player.Score
 	return s.Scores
 }
 
+// beatmapMeta bundles the display details a streamed score is missing.
+type beatmapMeta struct {
+	beatmap    player.Beatmap
+	beatmapSet player.BeatmapSet
+}
+
+// beatmapMetaCache memoizes beatmap metadata so a map's display details are
+// fetched from the osu! API at most once, process-wide, and reused across users.
+var beatmapMetaCache = optimization.NewCache[int64, beatmapMeta](10000)
+
+// beatmapResponse decodes GET /beatmaps/{id}: the difficulty fields sit at the
+// top level with the parent set nested under "beatmapset".
+type beatmapResponse struct {
+	player.Beatmap
+	BeatmapSet player.BeatmapSet `json:"beatmapset"`
+}
+
+// GetBeatmapMeta fetches a beatmap's display metadata (its difficulty and parent
+// set) by id, serving repeat lookups from a process-wide cache. Streamed scores
+// carry only a beatmap id, so this fills in the title, artist, difficulty and
+// covers a profile needs without re-requesting a map already seen.
+func GetBeatmapMeta(token *GuestToken, id int64) (player.Beatmap, player.BeatmapSet, error) {
+	if meta, found := beatmapMetaCache.Get(id); found {
+		return meta.beatmap, meta.beatmapSet, nil
+	}
+
+	req, _ := http.NewRequest(GET, APIv2URL(fmt.Sprintf("beatmaps/%d", id)), nil)
+	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+
+	res, err := apiClient.Do(req)
+	if err != nil {
+		return player.Beatmap{}, player.BeatmapSet{}, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		return player.Beatmap{}, player.BeatmapSet{}, errors.New("status_code=" + res.Status)
+	}
+
+	var body beatmapResponse
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		return player.Beatmap{}, player.BeatmapSet{}, err
+	}
+
+	beatmapMetaCache.Set(id, beatmapMeta{beatmap: body.Beatmap, beatmapSet: body.BeatmapSet})
+	return body.Beatmap, body.BeatmapSet, nil
+}
+
 func DownloadBeatmap(id int64) (buf []byte, err error) {
 	if beatmap, found := optimization.GetBeatmap(id); found {
 		return beatmap, nil
