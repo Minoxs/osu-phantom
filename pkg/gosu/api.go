@@ -72,27 +72,26 @@ func (c *Client) GetGuestToken(creds Credentials) (*GuestToken, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", JSON)
+	req.Header.Set("Content-Type", mimeJSON)
 	r, err := c.http.Do(req)
-
 	if err != nil {
 		return nil, err
 	}
 	defer r.Body.Close()
 
-	if r.StatusCode == 200 {
-		res := &GuestToken{}
-		return res, json.NewDecoder(r.Body).Decode(res)
-	} else {
+	if r.StatusCode != 200 {
 		return nil, errors.New("status_code=" + r.Status)
 	}
+
+	res := &GuestToken{}
+	return res, json.NewDecoder(r.Body).Decode(res)
 }
 
-func (c *Client) GetUserID(token *GuestToken, username string) (int, error) {
+func (c *Client) GetUserID(token *GuestToken, username string) (int64, error) {
 	endpoint := fmt.Sprintf("users/%s/osu/?key=username", username)
 
-	req, _ := http.NewRequest(GET, APIv2URL(endpoint), nil)
-	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
+	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -109,7 +108,7 @@ func (c *Client) GetUserID(token *GuestToken, username string) (int, error) {
 	return body.ID, err
 }
 
-func decodeProfile(res *http.Response) (*Profile, error) {
+func decodeUserExtended(res *http.Response) (*UserExtended, error) {
 	defer res.Body.Close()
 
 	if res.StatusCode == 404 {
@@ -119,49 +118,49 @@ func decodeProfile(res *http.Response) (*Profile, error) {
 		return nil, errors.New("status_code=" + res.Status)
 	}
 
-	profile := &Profile{}
-	if err := json.NewDecoder(res.Body).Decode(profile); err != nil {
+	user := &UserExtended{}
+	if err := json.NewDecoder(res.Body).Decode(user); err != nil {
 		return nil, err
 	}
-	return profile, nil
+	return user, nil
 }
 
 // GetUser fetches a full osu!standard profile by user id. Returns ErrUserNotFound
 // when no user carries that id.
-func (c *Client) GetUser(token *GuestToken, id int64) (*Profile, error) {
-	req, _ := http.NewRequest(GET, APIv2URL(fmt.Sprintf("users/%d/osu", id)), nil)
-	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+func (c *Client) GetUser(token *GuestToken, id int64) (*UserExtended, error) {
+	req, _ := http.NewRequest(http.MethodGet, APIv2URL(fmt.Sprintf("users/%d/osu", id)), nil)
+	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	return decodeProfile(res)
+	return decodeUserExtended(res)
 }
 
 // GetUserByName fetches a full osu!standard profile by username. Returns
 // ErrUserNotFound when no user carries that name.
-func (c *Client) GetUserByName(token *GuestToken, username string) (*Profile, error) {
-	req, _ := http.NewRequest(GET, APIv2URL(fmt.Sprintf("users/%s/osu?key=username", username)), nil)
-	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+func (c *Client) GetUserByName(token *GuestToken, username string) (*UserExtended, error) {
+	req, _ := http.NewRequest(http.MethodGet, APIv2URL(fmt.Sprintf("users/%s/osu?key=username", username)), nil)
+	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	return decodeProfile(res)
+	return decodeUserExtended(res)
 }
 
 // GetRecentScores fetches one page of a user's recent osu!standard scores,
 // newest first. limit is capped at 100 by the osu! API; offset pages past the
 // newest results.
-func (c *Client) GetRecentScores(token *GuestToken, userid, limit, offset int) FullScores {
+func (c *Client) GetRecentScores(token *GuestToken, userid int64, limit, offset int) FullScores {
 	endpoint := fmt.Sprintf("users/%d/scores/recent/?mode=osu&limit=%d&offset=%d", userid, limit, offset)
 
-	req, _ := http.NewRequest(GET, APIv2URL(endpoint), nil)
-	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
+	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -192,8 +191,8 @@ func (c *Client) GetScores(token *GuestToken, ruleset, cursor string) (Scores, s
 		endpoint += "&cursor_string=" + cursor
 	}
 
-	req, _ := http.NewRequest(GET, APIv2URL(endpoint), nil)
-	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
+	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -216,11 +215,11 @@ func (c *Client) GetScores(token *GuestToken, ruleset, cursor string) (Scores, s
 	return page.Scores, page.CursorString, nil
 }
 
-func (c *Client) GetBeatmapScores(token *GuestToken, userID int, beatmapID int) FullScores {
+func (c *Client) GetBeatmapScores(token *GuestToken, userID int64, beatmapID int64) FullScores {
 	endpoint := fmt.Sprintf("beatmaps/%d/scores/users/%d/all", beatmapID, userID)
 
-	req, _ := http.NewRequest(GET, APIv2URL(endpoint), nil)
-	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
+	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -246,26 +245,26 @@ func (c *Client) GetBeatmapScores(token *GuestToken, userID int, beatmapID int) 
 // owning beatmapset in the response, so both are returned: the map for its status
 // and difficulty, the set for its title, artist, and cover art. Unlike the beatmap
 // embedded in a score, this response carries a real max_combo.
-func (c *Client) GetBeatmap(token *GuestToken, id int64) (Beatmap, BeatmapSet, error) {
-	req, _ := http.NewRequest(GET, APIv2URL(fmt.Sprintf("beatmaps/%d", id)), nil)
-	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+func (c *Client) GetBeatmap(token *GuestToken, id int64) (BeatmapExtended, Beatmapset, error) {
+	req, _ := http.NewRequest(http.MethodGet, APIv2URL(fmt.Sprintf("beatmaps/%d", id)), nil)
+	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		return Beatmap{}, BeatmapSet{}, err
+		return BeatmapExtended{}, Beatmapset{}, err
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != 200 {
-		return Beatmap{}, BeatmapSet{}, errors.New("status_code=" + res.Status)
+		return BeatmapExtended{}, Beatmapset{}, errors.New("status_code=" + res.Status)
 	}
 
 	body := FullBeatmap{}
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-		return Beatmap{}, BeatmapSet{}, err
+		return BeatmapExtended{}, Beatmapset{}, err
 	}
-	return body.Beatmap, body.BeatmapSet, nil
+	return body.BeatmapExtended, body.Beatmapset, nil
 }
 
 // GetUsers fetches osu!standard profiles for many user ids in one request. It
@@ -277,7 +276,7 @@ func (c *Client) GetBeatmap(token *GuestToken, id int64) (Beatmap, BeatmapSet, e
 // onto Statistics. It carries less than the single-user endpoint: it omits country
 // rank entirely, so Statistics.CountryRank and Rank stay nil and a caller that needs
 // country rank must fetch that user singly.
-func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*Profile, error) {
+func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*User, error) {
 	if len(ids) > maxBulkIDs {
 		return nil, ErrTooManyIDs
 	}
@@ -285,8 +284,8 @@ func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*Profile, error) {
 		return nil, nil
 	}
 
-	req, _ := http.NewRequest(GET, bulkIDsURL("users", ids), nil)
-	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+	req, _ := http.NewRequest(http.MethodGet, bulkIDsURL("users", ids), nil)
+	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -301,9 +300,9 @@ func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*Profile, error) {
 
 	page := struct {
 		Users []struct {
-			Profile
+			User
 			StatisticsRulesets struct {
-				Osu RankStatistics `json:"osu"`
+				Osu UserStatistics `json:"osu"`
 			} `json:"statistics_rulesets"`
 		} `json:"users"`
 	}{}
@@ -311,10 +310,10 @@ func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*Profile, error) {
 		return nil, err
 	}
 
-	profiles := make([]*Profile, 0, len(page.Users))
+	profiles := make([]*User, 0, len(page.Users))
 	for i := range page.Users {
-		p := page.Users[i].Profile
-		if p.Statistics == (RankStatistics{}) {
+		p := page.Users[i].User
+		if p.Statistics == (UserStatistics{}) {
 			p.Statistics = page.Users[i].StatisticsRulesets.Osu
 		}
 		profiles = append(profiles, &p)
@@ -335,8 +334,8 @@ func (c *Client) GetBeatmaps(token *GuestToken, ids []int64) ([]FullBeatmap, err
 		return nil, nil
 	}
 
-	req, _ := http.NewRequest(GET, bulkIDsURL("beatmaps", ids), nil)
-	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
+	req, _ := http.NewRequest(http.MethodGet, bulkIDsURL("beatmaps", ids), nil)
+	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)

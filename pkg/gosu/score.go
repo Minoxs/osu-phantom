@@ -24,7 +24,9 @@ func (s BeatmapStatus) AwardsPP() bool {
 	return s == StatusRanked || s == StatusApproved
 }
 
-type Beatmap struct {
+// BeatmapExtended is osu!'s extended beatmap object, carrying the difficulty
+// attributes (ar, cs, od, drain, object counts) the compact beatmap omits.
+type BeatmapExtended struct {
 	ID            int64         `json:"id"`
 	Version       string        `json:"version"`
 	StarRating    float32       `json:"difficulty_rating"`
@@ -50,7 +52,7 @@ type Covers struct {
 	Slim  string `json:"slimcover"`
 }
 
-type BeatmapSet struct {
+type Beatmapset struct {
 	ID      int64  `json:"id"`
 	Title   string `json:"title"`
 	Artist  string `json:"artist"`
@@ -62,8 +64,8 @@ type BeatmapSet struct {
 // bulk-beatmaps endpoints return it: the map for its status and difficulty, the set
 // for its title, artist, and cover art.
 type FullBeatmap struct {
-	Beatmap
-	BeatmapSet BeatmapSet `json:"beatmapset"`
+	BeatmapExtended
+	Beatmapset Beatmapset `json:"beatmapset"`
 }
 
 // Score is an osu! API v2 "solo_score": one play as osu! stores it under the
@@ -73,7 +75,7 @@ type FullBeatmap struct {
 // embeds those, such as the user-scores endpoints.
 type Score struct {
 	ID         int64     `json:"id"`
-	UserID     int       `json:"user_id"`
+	UserID     int64     `json:"user_id"`
 	BeatmapID  int64     `json:"beatmap_id"`
 	RulesetID  int       `json:"ruleset_id"`
 	EndedAt    time.Time `json:"ended_at"`
@@ -88,17 +90,17 @@ type Score struct {
 	Ranked bool `json:"ranked"`
 	// Processed is false until osu finishes server-side processing, most notably the
 	// pp calculation, so a false value means PP is not yet authoritative.
-	Processed  bool       `json:"processed"`
-	PP         float64    `json:"pp"`
-	Statistics Statistics `json:"statistics"`
+	Processed  bool            `json:"processed"`
+	PP         float64         `json:"pp"`
+	Statistics ScoreStatistics `json:"statistics"`
 }
 
 // FullScore is a Score as the endpoints that embed the map return it: a user's
 // score list or a beatmap's score list carry both the beatmap and its set inline.
 type FullScore struct {
 	Score
-	Beatmap    Beatmap    `json:"beatmap"`
-	BeatmapSet BeatmapSet `json:"beatmapset"`
+	Beatmap    BeatmapExtended `json:"beatmap"`
+	Beatmapset Beatmapset      `json:"beatmapset"`
 }
 
 // Mode is the score's ruleset as a mode name (osu/taiko/fruits/mania). The

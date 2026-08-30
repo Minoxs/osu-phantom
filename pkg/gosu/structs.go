@@ -9,10 +9,6 @@ func createHeader(authType, authValue string) string {
 	return authType + " " + authValue
 }
 
-type User struct {
-	ID int `json:"id"`
-}
-
 type GuestToken struct {
 	AccessToken string `json:"access_token"`
 	ExpiresIn   int    `json:"expires_in"`
