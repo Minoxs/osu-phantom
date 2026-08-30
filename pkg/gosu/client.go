@@ -1,4 +1,4 @@
-package osu
+package gosu
 
 import (
 	"net/http"

@@ -1,4 +1,4 @@
-package player
+package gosu
 
 import (
 	"encoding/json"

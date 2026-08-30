@@ -1,4 +1,4 @@
-package player
+package gosu
 
 import (
 	"fmt"
@@ -72,17 +72,17 @@ type FullBeatmap struct {
 // beatmap_id and no embedded beatmap or beatmapset. Use FullScore where the API
 // embeds those, such as the user-scores endpoints.
 type Score struct {
-	ID         int64      `json:"id"`
-	UserID     int        `json:"user_id"`
-	BeatmapID  int64      `json:"beatmap_id"`
-	RulesetID  int        `json:"ruleset_id"`
-	EndedAt    time.Time  `json:"ended_at"`
-	Accuracy   float32    `json:"accuracy"`
-	Mods       Mods       `json:"mods"`
-	TotalScore int        `json:"total_score"`
-	MaxCombo   int        `json:"max_combo"`
-	Rank       string     `json:"rank"`
-	Passed     bool       `json:"passed"`
+	ID         int64     `json:"id"`
+	UserID     int       `json:"user_id"`
+	BeatmapID  int64     `json:"beatmap_id"`
+	RulesetID  int       `json:"ruleset_id"`
+	EndedAt    time.Time `json:"ended_at"`
+	Accuracy   float32   `json:"accuracy"`
+	Mods       Mods      `json:"mods"`
+	TotalScore int       `json:"total_score"`
+	MaxCombo   int       `json:"max_combo"`
+	Rank       string    `json:"rank"`
+	Passed     bool      `json:"passed"`
 	// Ranked is osu's beatmap-leaderboard-visibility flag. Notably it does not track
 	// whether the score gives pp, so it is not a pp signal.
 	Ranked bool `json:"ranked"`

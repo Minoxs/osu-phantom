@@ -1,12 +1,10 @@
-package osu
+package gosu
 
 import (
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/minoxs/osu-phantom/pkg/osu/optimization"
-	"github.com/minoxs/osu-phantom/pkg/osu/player"
 	"io"
 	"log/slog"
 	"net/http"
@@ -111,7 +109,7 @@ func (c *Client) GetUserID(token *GuestToken, username string) (int, error) {
 	return body.ID, err
 }
 
-func decodeProfile(res *http.Response) (*player.Profile, error) {
+func decodeProfile(res *http.Response) (*Profile, error) {
 	defer res.Body.Close()
 
 	if res.StatusCode == 404 {
@@ -121,7 +119,7 @@ func decodeProfile(res *http.Response) (*player.Profile, error) {
 		return nil, errors.New("status_code=" + res.Status)
 	}
 
-	profile := &player.Profile{}
+	profile := &Profile{}
 	if err := json.NewDecoder(res.Body).Decode(profile); err != nil {
 		return nil, err
 	}
@@ -130,7 +128,7 @@ func decodeProfile(res *http.Response) (*player.Profile, error) {
 
 // GetUser fetches a full osu!standard profile by user id. Returns ErrUserNotFound
 // when no user carries that id.
-func (c *Client) GetUser(token *GuestToken, id int64) (*player.Profile, error) {
+func (c *Client) GetUser(token *GuestToken, id int64) (*Profile, error) {
 	req, _ := http.NewRequest(GET, APIv2URL(fmt.Sprintf("users/%d/osu", id)), nil)
 	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
@@ -144,7 +142,7 @@ func (c *Client) GetUser(token *GuestToken, id int64) (*player.Profile, error) {
 
 // GetUserByName fetches a full osu!standard profile by username. Returns
 // ErrUserNotFound when no user carries that name.
-func (c *Client) GetUserByName(token *GuestToken, username string) (*player.Profile, error) {
+func (c *Client) GetUserByName(token *GuestToken, username string) (*Profile, error) {
 	req, _ := http.NewRequest(GET, APIv2URL(fmt.Sprintf("users/%s/osu?key=username", username)), nil)
 	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
@@ -159,7 +157,7 @@ func (c *Client) GetUserByName(token *GuestToken, username string) (*player.Prof
 // GetRecentScores fetches one page of a user's recent osu!standard scores,
 // newest first. limit is capped at 100 by the osu! API; offset pages past the
 // newest results.
-func (c *Client) GetRecentScores(token *GuestToken, userid, limit, offset int) player.FullScores {
+func (c *Client) GetRecentScores(token *GuestToken, userid, limit, offset int) FullScores {
 	endpoint := fmt.Sprintf("users/%d/scores/recent/?mode=osu&limit=%d&offset=%d", userid, limit, offset)
 
 	req, _ := http.NewRequest(GET, APIv2URL(endpoint), nil)
@@ -173,7 +171,7 @@ func (c *Client) GetRecentScores(token *GuestToken, userid, limit, offset int) p
 	}
 	defer res.Body.Close()
 
-	scores := make(player.FullScores, 0)
+	scores := make(FullScores, 0)
 	err = json.NewDecoder(res.Body).Decode(&scores)
 	if err != nil {
 		slog.Error("Error while decoding response", "Error", err)
@@ -188,7 +186,7 @@ func (c *Client) GetRecentScores(token *GuestToken, userid, limit, offset int) p
 // cursor_string from a previous page, or empty for the newest page; the returned
 // cursor_string fetches the scores newer than this page. Scores carry no embedded
 // beatmap, only a beatmap_id.
-func (c *Client) GetScores(token *GuestToken, ruleset, cursor string) (player.Scores, string, error) {
+func (c *Client) GetScores(token *GuestToken, ruleset, cursor string) (Scores, string, error) {
 	endpoint := "scores?ruleset=" + ruleset
 	if cursor != "" {
 		endpoint += "&cursor_string=" + cursor
@@ -209,8 +207,8 @@ func (c *Client) GetScores(token *GuestToken, ruleset, cursor string) (player.Sc
 	}
 
 	page := struct {
-		Scores       player.Scores `json:"scores"`
-		CursorString string        `json:"cursor_string"`
+		Scores       Scores `json:"scores"`
+		CursorString string `json:"cursor_string"`
 	}{}
 	if err := json.NewDecoder(res.Body).Decode(&page); err != nil {
 		return nil, "", err
@@ -218,7 +216,7 @@ func (c *Client) GetScores(token *GuestToken, ruleset, cursor string) (player.Sc
 	return page.Scores, page.CursorString, nil
 }
 
-func (c *Client) GetBeatmapScores(token *GuestToken, userID int, beatmapID int) player.FullScores {
+func (c *Client) GetBeatmapScores(token *GuestToken, userID int, beatmapID int) FullScores {
 	endpoint := fmt.Sprintf("beatmaps/%d/scores/users/%d/all", beatmapID, userID)
 
 	req, _ := http.NewRequest(GET, APIv2URL(endpoint), nil)
@@ -233,7 +231,7 @@ func (c *Client) GetBeatmapScores(token *GuestToken, userID int, beatmapID int) 
 	defer res.Body.Close()
 
 	s := struct {
-		Scores player.FullScores `json:"scores"`
+		Scores FullScores `json:"scores"`
 	}{}
 	err = json.NewDecoder(res.Body).Decode(&s)
 	if err != nil {
@@ -248,24 +246,24 @@ func (c *Client) GetBeatmapScores(token *GuestToken, userID int, beatmapID int) 
 // owning beatmapset in the response, so both are returned: the map for its status
 // and difficulty, the set for its title, artist, and cover art. Unlike the beatmap
 // embedded in a score, this response carries a real max_combo.
-func (c *Client) GetBeatmap(token *GuestToken, id int64) (player.Beatmap, player.BeatmapSet, error) {
+func (c *Client) GetBeatmap(token *GuestToken, id int64) (Beatmap, BeatmapSet, error) {
 	req, _ := http.NewRequest(GET, APIv2URL(fmt.Sprintf("beatmaps/%d", id)), nil)
 	req.Header.Add(AUTH, createHeader(token.TokenType, token.AccessToken))
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		return player.Beatmap{}, player.BeatmapSet{}, err
+		return Beatmap{}, BeatmapSet{}, err
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != 200 {
-		return player.Beatmap{}, player.BeatmapSet{}, errors.New("status_code=" + res.Status)
+		return Beatmap{}, BeatmapSet{}, errors.New("status_code=" + res.Status)
 	}
 
-	body := player.FullBeatmap{}
+	body := FullBeatmap{}
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-		return player.Beatmap{}, player.BeatmapSet{}, err
+		return Beatmap{}, BeatmapSet{}, err
 	}
 	return body.Beatmap, body.BeatmapSet, nil
 }
@@ -279,7 +277,7 @@ func (c *Client) GetBeatmap(token *GuestToken, id int64) (player.Beatmap, player
 // onto Statistics. It carries less than the single-user endpoint: it omits country
 // rank entirely, so Statistics.CountryRank and Rank stay nil and a caller that needs
 // country rank must fetch that user singly.
-func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*player.Profile, error) {
+func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*Profile, error) {
 	if len(ids) > maxBulkIDs {
 		return nil, ErrTooManyIDs
 	}
@@ -303,9 +301,9 @@ func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*player.Profile, er
 
 	page := struct {
 		Users []struct {
-			player.Profile
+			Profile
 			StatisticsRulesets struct {
-				Osu player.RankStatistics `json:"osu"`
+				Osu RankStatistics `json:"osu"`
 			} `json:"statistics_rulesets"`
 		} `json:"users"`
 	}{}
@@ -313,10 +311,10 @@ func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*player.Profile, er
 		return nil, err
 	}
 
-	profiles := make([]*player.Profile, 0, len(page.Users))
+	profiles := make([]*Profile, 0, len(page.Users))
 	for i := range page.Users {
 		p := page.Users[i].Profile
-		if p.Statistics == (player.RankStatistics{}) {
+		if p.Statistics == (RankStatistics{}) {
 			p.Statistics = page.Users[i].StatisticsRulesets.Osu
 		}
 		profiles = append(profiles, &p)
@@ -329,7 +327,7 @@ func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*player.Profile, er
 // passed, and nil for an empty list without calling the API. osu! returns only the
 // ids it finds, so the result may be shorter than ids and in any order; callers key
 // it by beatmap id.
-func (c *Client) GetBeatmaps(token *GuestToken, ids []int64) ([]player.FullBeatmap, error) {
+func (c *Client) GetBeatmaps(token *GuestToken, ids []int64) ([]FullBeatmap, error) {
 	if len(ids) > maxBulkIDs {
 		return nil, ErrTooManyIDs
 	}
@@ -352,42 +350,10 @@ func (c *Client) GetBeatmaps(token *GuestToken, ids []int64) ([]player.FullBeatm
 	}
 
 	page := struct {
-		Beatmaps []player.FullBeatmap `json:"beatmaps"`
+		Beatmaps []FullBeatmap `json:"beatmaps"`
 	}{}
 	if err := json.NewDecoder(res.Body).Decode(&page); err != nil {
 		return nil, err
 	}
 	return page.Beatmaps, nil
-}
-
-func (c *Client) DownloadBeatmap(id int64) (buf []byte, err error) {
-	if beatmap, found := optimization.GetBeatmap(id); found {
-		return beatmap, nil
-	}
-
-	var url = BaseURL + "/osu/" + fmt.Sprintf("%d", id)
-	var res *http.Response
-
-	req, err := http.NewRequest(GET, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	res, err = c.http.Do(req)
-	if err != nil {
-		return
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != 200 {
-		err = errors.New("status_code=" + res.Status)
-		return
-	}
-
-	buf, err = io.ReadAll(res.Body)
-	slog.Info("Beatmap downloaded", "ID", id, "Size", len(buf))
-	if err == nil {
-		optimization.PutBeatmap(id, buf)
-	}
-
-	return
 }

@@ -1,3 +1,3 @@
-module github.com/minoxs/osu-phantom
+module github.com/minoxs/gosu-api
 
 go 1.21

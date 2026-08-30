@@ -1,4 +1,4 @@
-package player
+package gosu
 
 // Mod is one mod on a score in the osu! API v2 shape. The API emits Settings only
 // when the mod is customized, which itself unranks an otherwise ranked mod.
