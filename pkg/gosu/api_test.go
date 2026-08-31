@@ -1,4 +1,4 @@
-package osu
+package gosu
 
 import (
 	"errors"
@@ -115,7 +115,7 @@ func TestGetBeatmapsDecodesSet(t *testing.T) {
 	if len(got) != 1 || got[0].ID != 5 || got[0].MaxCombo != 600 {
 		t.Fatalf("beatmap = %+v, want id 5 max_combo 600", got)
 	}
-	if got[0].BeatmapSet.ID != 3 || got[0].BeatmapSet.Title != "t" {
-		t.Fatalf("set = %+v, want id 3 title t", got[0].BeatmapSet)
+	if got[0].Beatmapset.ID != 3 || got[0].Beatmapset.Title != "t" {
+		t.Fatalf("set = %+v, want id 3 title t", got[0].Beatmapset)
 	}
 }

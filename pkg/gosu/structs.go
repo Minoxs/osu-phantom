@@ -1,4 +1,4 @@
-package osu
+package gosu
 
 import "errors"
 
@@ -7,10 +7,6 @@ var ErrUserNotFound = errors.New("user not found")
 
 func createHeader(authType, authValue string) string {
 	return authType + " " + authValue
-}
-
-type User struct {
-	ID int `json:"id"`
 }
 
 type GuestToken struct {

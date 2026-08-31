@@ -1,4 +1,4 @@
-package osu
+package gosu
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 )
 
 // scriptedTransport returns a preset status code per call, recording how many calls it
-// saw, so a test can assert the throttledTransport's retry behavior on 429.
+// saw, so a test can assert the RateLimiter's retry behavior on 429.
 type scriptedTransport struct {
 	codes      []int
 	retryAfter string
@@ -32,10 +32,10 @@ func (s *scriptedTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 // TestTransportRetriesOn429 verifies a 429 is waited out and the request retried until
-// it succeeds, each attempt pacing through the shared pacer.
+// it succeeds, each attempt pacing through the limiter.
 func TestTransportRetriesOn429(t *testing.T) {
 	rt := &scriptedTransport{codes: []int{429, 429, 200}, retryAfter: "0"}
-	tr := &throttledTransport{base: rt, pacer: newPacer(600), prio: 0}
+	tr := NewRateLimiter(rt, 600)
 
 	req, _ := http.NewRequest(http.MethodGet, "http://example/x", nil)
 	res, err := tr.RoundTrip(req)
@@ -54,7 +54,7 @@ func TestTransportRetriesOn429(t *testing.T) {
 // retry budget rather than looping forever.
 func TestTransportSurfacesPersistent429(t *testing.T) {
 	rt := &scriptedTransport{codes: []int{429}, retryAfter: "0"}
-	tr := &throttledTransport{base: rt, pacer: newPacer(600), prio: 0}
+	tr := NewRateLimiter(rt, 600)
 
 	req, _ := http.NewRequest(http.MethodGet, "http://example/x", nil)
 	res, err := tr.RoundTrip(req)
@@ -89,12 +89,12 @@ func TestRetryAfterParsing(t *testing.T) {
 // TestPacerPrefersHighPriority verifies that a high-priority reservation enqueued
 // after a low-priority one is still granted first.
 func TestPacerPrefersHighPriority(t *testing.T) {
-	p := newPacer(600) // 100ms between slots
+	l := NewRateLimiter(nil, 600) // 100ms between slots
 	ctx := context.Background()
 
-	// The first reservation takes the immediate slot and puts the dispatcher into
+	// The first reservation takes the immediate slot and puts the granting loop into
 	// its inter-slot sleep, so the next two reservations queue behind one grant.
-	if err := p.reserve(ctx, 0); err != nil {
+	if err := l.reserve(ctx, 0); err != nil {
 		t.Fatalf("first reserve: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestPacerPrefersHighPriority(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_ = p.reserve(ctx, 0)
+		_ = l.reserve(ctx, 0)
 		order <- "low"
 	}()
 	// Let the low reservation reach the queue before the high one, so priority,
@@ -111,7 +111,7 @@ func TestPacerPrefersHighPriority(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	go func() {
 		defer wg.Done()
-		_ = p.reserve(ctx, 1)
+		_ = l.reserve(ctx, 1)
 		order <- "high"
 	}()
 
@@ -124,12 +124,12 @@ func TestPacerPrefersHighPriority(t *testing.T) {
 // TestPacerServesLevelsInDescendingOrder verifies the pacer grants across more than
 // two levels strictly highest first, regardless of arrival order.
 func TestPacerServesLevelsInDescendingOrder(t *testing.T) {
-	p := newPacer(600) // 100ms between slots
+	l := NewRateLimiter(nil, 600) // 100ms between slots
 	ctx := context.Background()
 
 	// The first reservation takes the immediate slot and starts the inter-slot
 	// sleep, so the next three queue behind one grant.
-	if err := p.reserve(ctx, 0); err != nil {
+	if err := l.reserve(ctx, 0); err != nil {
 		t.Fatalf("first reserve: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func TestPacerServesLevelsInDescendingOrder(t *testing.T) {
 	var wg sync.WaitGroup
 	reserveAt := func(level Priority) {
 		defer wg.Done()
-		_ = p.reserve(ctx, level)
+		_ = l.reserve(ctx, level)
 		order <- int(level)
 	}
 	wg.Add(3)
@@ -162,15 +162,15 @@ func TestPacerServesLevelsInDescendingOrder(t *testing.T) {
 // TestPacerReserveHonorsContext verifies a cancelled context releases a waiter
 // instead of blocking on a slot that never comes.
 func TestPacerReserveHonorsContext(t *testing.T) {
-	p := newPacer(1) // one slot per minute, so the second reservation waits
+	l := NewRateLimiter(nil, 1) // one slot per minute, so the second reservation waits
 
-	if err := p.reserve(context.Background(), 0); err != nil {
+	if err := l.reserve(context.Background(), 0); err != nil {
 		t.Fatalf("first reserve: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := p.reserve(ctx, 0); err == nil {
+	if err := l.reserve(ctx, 0); err == nil {
 		t.Error("reserve with cancelled context returned nil, want context error")
 	}
 }

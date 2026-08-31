@@ -1,4 +1,4 @@
-package player
+package gosu
 
 import (
 	"encoding/json"
@@ -57,8 +57,8 @@ func TestFullScoreDecode(t *testing.T) {
 	if s.Beatmap.ID != 2335023 || s.Beatmap.Status != StatusRanked {
 		t.Errorf("beatmap = %d/%q", s.Beatmap.ID, s.Beatmap.Status)
 	}
-	if s.BeatmapSet.Title != "Song" || s.BeatmapSet.Creator != "Mapper" {
-		t.Errorf("set = %q/%q", s.BeatmapSet.Title, s.BeatmapSet.Creator)
+	if s.Beatmapset.Title != "Song" || s.Beatmapset.Creator != "Mapper" {
+		t.Errorf("set = %q/%q", s.Beatmapset.Title, s.Beatmapset.Creator)
 	}
 }
 
