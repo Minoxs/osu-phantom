@@ -9,34 +9,28 @@ import (
 	"time"
 )
 
-// defaultRequestsPerMinute is the osu! API terms-of-use ceiling: no more than 60
-// requests per minute. Every request this package makes passes through the pacer
-// so the whole process, across all callers, stays under it.
+// defaultRequestsPerMinute is the osu! API terms-of-use ceiling.
 const defaultRequestsPerMinute = 60
 
-// osu! counts requests per OAuth client and its window outlives a process restart, so a
-// redeploy can 429 despite the pacer. These bound the wait-and-retry that absorbs it.
+// osu! counts requests per OAuth client and the window outlives a restart, so a redeploy
+// can 429 despite pacing. These bound the retry that absorbs it.
 const (
 	maxRateLimitRetries = 4
 	defaultRetryAfter   = 2 * time.Second
 	maxRetryAfter       = time.Minute
 )
 
-// Priority orders requests at the shared pacer: when several wait at once, a higher
-// value is granted first, and ties break by arrival order. This package only orders
-// the levels; the caller assigns their meaning by building a Client at each level.
-// The zero value is the level a default Client carries.
+// Priority orders requests competing for one RateLimiter's slots: higher wins, ties
+// break by arrival. It matters only when several clients share a limiter.
 type Priority int
 
-// waiter is one pending reservation; ready closes when the pacer grants it.
 type waiter struct {
 	prio  Priority
 	seq   uint64
 	ready chan struct{}
 }
 
-// waiterHeap orders by descending priority, then ascending seq so a level is served
-// first-come first-served.
+// waiterHeap orders by descending priority, then ascending seq.
 type waiterHeap []*waiter
 
 func (h waiterHeap) Len() int { return len(h) }
@@ -57,11 +51,12 @@ func (h *waiterHeap) Pop() any {
 	return w
 }
 
-// pacer spaces osu! requests to keep the whole process under the API ceiling,
-// granting one slot per interval to the highest-priority waiter. A caller reserves
-// at a priority it chooses, so a burst of low-priority traffic never delays a
-// higher-priority request by more than a single slot.
-type pacer struct {
+// RateLimiter is an http.RoundTripper that spaces requests to keep traffic through it
+// under the osu! ceiling and retries on 429. It grants one slot per interval to the
+// highest-priority waiter. Share one across clients to hold a single ceiling for them.
+type RateLimiter struct {
+	base http.RoundTripper
+
 	mu       sync.Mutex
 	cond     *sync.Cond
 	queue    waiterHeap
@@ -70,34 +65,45 @@ type pacer struct {
 	started  bool
 }
 
-func newPacer(perMinute int) *pacer {
-	p := &pacer{interval: rateInterval(perMinute)}
-	p.cond = sync.NewCond(&p.mu)
-	return p
+// NewRateLimiter wraps base to pace requests to perMinute per minute. A nil base uses
+// http.DefaultTransport; a non-positive perMinute uses the osu! ceiling.
+func NewRateLimiter(base http.RoundTripper, perMinute int) *RateLimiter {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	l := &RateLimiter{base: base, interval: rateInterval(perMinute)}
+	l.cond = sync.NewCond(&l.mu)
+	return l
 }
 
 func rateInterval(perMinute int) time.Duration {
 	if perMinute < 1 {
-		perMinute = 1
+		perMinute = defaultRequestsPerMinute
 	}
 	return time.Minute / time.Duration(perMinute)
 }
 
-// reserve blocks until the pacer grants a slot or ctx is cancelled. A higher
-// priority is granted ahead of any lower one waiting at the same time.
-func (p *pacer) reserve(ctx context.Context, prio Priority) error {
+// SetRate repaces to perMinute per minute from the next slot. Non-positive uses the ceiling.
+func (l *RateLimiter) SetRate(perMinute int) {
+	l.mu.Lock()
+	l.interval = rateInterval(perMinute)
+	l.mu.Unlock()
+}
+
+// reserve blocks until the limiter grants a slot or ctx is cancelled.
+func (l *RateLimiter) reserve(ctx context.Context, prio Priority) error {
 	w := &waiter{prio: prio, ready: make(chan struct{})}
 
-	p.mu.Lock()
-	if !p.started {
-		p.started = true
-		go p.run()
+	l.mu.Lock()
+	if !l.started {
+		l.started = true
+		go l.run()
 	}
-	w.seq = p.seq
-	p.seq++
-	heap.Push(&p.queue, w)
-	p.cond.Signal()
-	p.mu.Unlock()
+	w.seq = l.seq
+	l.seq++
+	heap.Push(&l.queue, w)
+	l.cond.Signal()
+	l.mu.Unlock()
 
 	select {
 	case <-w.ready:
@@ -107,46 +113,31 @@ func (p *pacer) reserve(ctx context.Context, prio Priority) error {
 	}
 }
 
-// run grants one waiter per interval, always the highest priority waiting.
-func (p *pacer) run() {
+// run grants one waiter per interval, highest priority first.
+func (l *RateLimiter) run() {
 	for {
-		p.mu.Lock()
-		for p.queue.Len() == 0 {
-			p.cond.Wait()
+		l.mu.Lock()
+		for l.queue.Len() == 0 {
+			l.cond.Wait()
 		}
-		w := heap.Pop(&p.queue).(*waiter)
-		interval := p.interval
-		p.mu.Unlock()
+		w := heap.Pop(&l.queue).(*waiter)
+		interval := l.interval
+		l.mu.Unlock()
 
 		close(w.ready)
 		time.Sleep(interval)
 	}
 }
 
-func (p *pacer) setRate(perMinute int) {
-	p.mu.Lock()
-	p.interval = rateInterval(perMinute)
-	p.mu.Unlock()
-}
-
-// throttledTransport blocks each request until the pacer grants it a slot at prio,
-// the level of the Client that owns this transport. The request context is honored
-// only for cancellation.
-type throttledTransport struct {
-	base  http.RoundTripper
-	pacer *pacer
-	prio  Priority
-}
-
-// RoundTrip paces each attempt and, on a 429, waits out the limit and retries up to
-// maxRateLimitRetries times. Each attempt reserves its own pacer slot so retries do not
-// burst. An unrewindable body or a persistent 429 is returned as-is.
-func (t *throttledTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+// RoundTrip paces each attempt and retries on 429 up to maxRateLimitRetries times, each
+// attempt reserving its own slot. An unrewindable body or a persistent 429 returns as-is.
+func (l *RateLimiter) RoundTrip(req *http.Request) (*http.Response, error) {
+	prio := priorityFrom(req.Context())
 	for attempt := 0; ; attempt++ {
-		if err := t.pacer.reserve(req.Context(), t.prio); err != nil {
+		if err := l.reserve(req.Context(), prio); err != nil {
 			return nil, err
 		}
-		res, err := t.base.RoundTrip(req)
+		res, err := l.base.RoundTrip(req)
 		if err != nil {
 			return nil, err
 		}
@@ -163,8 +154,32 @@ func (t *throttledTransport) RoundTrip(req *http.Request) (*http.Response, error
 	}
 }
 
-// rewind resets a request body so it can be sent again, reporting whether the request is
-// safe to retry. A bodyless request always is; one with a body needs GetBody.
+type priorityKey struct{}
+
+func withPriority(ctx context.Context, prio Priority) context.Context {
+	return context.WithValue(ctx, priorityKey{}, prio)
+}
+
+func priorityFrom(ctx context.Context) Priority {
+	if prio, ok := ctx.Value(priorityKey{}).(Priority); ok {
+		return prio
+	}
+	return 0
+}
+
+// prioTransport stamps a Client's priority onto each request so the shared limiter it
+// wraps can order requests across clients.
+type prioTransport struct {
+	l    *RateLimiter
+	prio Priority
+}
+
+func (t prioTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.l.RoundTrip(req.WithContext(withPriority(req.Context(), t.prio)))
+}
+
+// rewind resets a request body for a retry, reporting whether that is possible. A body
+// can only be replayed through GetBody.
 func rewind(req *http.Request) bool {
 	if req.Body == nil || req.Body == http.NoBody {
 		return true
@@ -180,8 +195,8 @@ func rewind(req *http.Request) bool {
 	return true
 }
 
-// retryAfter reads the Retry-After header as delta seconds or an HTTP date, falling back
-// to def when absent or unparseable and capping at maxRetryAfter.
+// retryAfter reads Retry-After as delta seconds or an HTTP date, falling back to def and
+// capping at maxRetryAfter.
 func retryAfter(h http.Header, def time.Duration) time.Duration {
 	v := h.Get("Retry-After")
 	if v == "" {
@@ -199,14 +214,4 @@ func retryAfter(h http.Header, def time.Duration) time.Duration {
 		return maxRetryAfter
 	}
 	return wait
-}
-
-// globalPacer is the process-wide pacer every Client reserves on, so the rate ceiling
-// holds across all callers and priority levels.
-var globalPacer = newPacer(defaultRequestsPerMinute)
-
-// SetRateLimit caps every osu! request this package makes to perMinute requests
-// per minute, shared process-wide. Values below 1 clamp to 1.
-func SetRateLimit(perMinute int) {
-	globalPacer.setRate(perMinute)
 }

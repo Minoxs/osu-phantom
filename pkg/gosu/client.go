@@ -5,20 +5,23 @@ import (
 	"time"
 )
 
-// Client makes osu! API requests at a fixed pacer priority. Build one per level;
-// every request it makes reserves a slot on the shared pacer at that level, so the
-// whole process stays under the API ceiling while higher-priority clients are served
-// ahead of lower ones. The priority is the client's, not the call's: a caller picks
-// the level once when it builds the client, and the request methods carry none of
-// their own.
+// Client calls the osu! API v2. Its methods take a GuestToken and return decoded
+// results. Pacing lives in the transport, so a Client is only as paced as its limiter.
 type Client struct {
 	http *http.Client
 }
 
-// NewClient builds a Client whose every request reserves at prio on the shared pacer.
-func NewClient(prio Priority) *Client {
+// NewClient builds a Client on its own RateLimiter paced to the osu! ceiling. osu! counts
+// requests per OAuth client, so several clients under one app must share a limiter via
+// NewClientWith rather than each building their own.
+func NewClient() *Client {
+	return NewClientWith(NewRateLimiter(http.DefaultTransport, defaultRequestsPerMinute), 0)
+}
+
+// NewClientWith builds a Client that submits to the shared limiter l at priority prio.
+func NewClientWith(l *RateLimiter, prio Priority) *Client {
 	return &Client{http: &http.Client{
 		Timeout:   30 * time.Second,
-		Transport: &throttledTransport{base: http.DefaultTransport, pacer: globalPacer, prio: prio},
+		Transport: prioTransport{l: l, prio: prio},
 	}}
 }
