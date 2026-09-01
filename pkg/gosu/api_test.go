@@ -8,16 +8,20 @@ import (
 	"testing"
 )
 
-// roundTripFunc serves a canned response for any request, recording the last URL it
-// saw so tests can assert what was requested.
+// roundTripFunc serves a canned response for any request, recording the call count, the
+// last URL, and the last request headers so tests can assert what was requested.
 type roundTripFunc struct {
-	body    string
-	status  int
-	lastURL string
+	body       string
+	status     int
+	calls      int
+	lastURL    string
+	lastHeader http.Header
 }
 
 func (f *roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	f.calls++
 	f.lastURL = req.URL.String()
+	f.lastHeader = req.Header.Clone()
 	status := f.status
 	if status == 0 {
 		status = 200
@@ -42,6 +46,10 @@ func clientWith(rt http.RoundTripper) *Client {
 	return &Client{http: &http.Client{Transport: rt}}
 }
 
+func resourceClientWith(rt http.RoundTripper) *ResourceClient {
+	return &ResourceClient{Client: clientWith(rt)}
+}
+
 func manyIDs(n int) []int64 {
 	ids := make([]int64, n)
 	for i := range ids {
@@ -59,14 +67,14 @@ func TestBulkIDsURLRepeatsParam(t *testing.T) {
 
 func TestGetUsersRejectsTooManyIDs(t *testing.T) {
 	c := clientWith(failRoundTrip{t})
-	if _, err := c.GetUsers(&GuestToken{}, manyIDs(maxBulkIDs+1)); !errors.Is(err, ErrTooManyIDs) {
+	if _, err := c.GetUsers(manyIDs(maxBulkIDs + 1)); !errors.Is(err, ErrTooManyIDs) {
 		t.Fatalf("err = %v, want ErrTooManyIDs", err)
 	}
 }
 
 func TestGetUsersEmptySkipsRequest(t *testing.T) {
 	c := clientWith(failRoundTrip{t})
-	got, err := c.GetUsers(&GuestToken{}, nil)
+	got, err := c.GetUsers(nil)
 	if err != nil || got != nil {
 		t.Fatalf("GetUsers(nil) = %v, %v; want nil, nil", got, err)
 	}
@@ -76,7 +84,7 @@ func TestGetUsersEmptySkipsRequest(t *testing.T) {
 // ruleset stats onto Statistics so the shape matches the single-user endpoint.
 func TestGetUsersFoldsRulesetStats(t *testing.T) {
 	rt := &roundTripFunc{body: `{"users":[{"id":9,"username":"a","statistics_rulesets":{"osu":{"pp":1234.5,"global_rank":10}}}]}`}
-	got, err := clientWith(rt).GetUsers(&GuestToken{}, []int64{9})
+	got, err := clientWith(rt).GetUsers([]int64{9})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,14 +101,14 @@ func TestGetUsersFoldsRulesetStats(t *testing.T) {
 
 func TestGetBeatmapsRejectsTooManyIDs(t *testing.T) {
 	c := clientWith(failRoundTrip{t})
-	if _, err := c.GetBeatmaps(&GuestToken{}, manyIDs(maxBulkIDs+1)); !errors.Is(err, ErrTooManyIDs) {
+	if _, err := c.GetBeatmaps(manyIDs(maxBulkIDs + 1)); !errors.Is(err, ErrTooManyIDs) {
 		t.Fatalf("err = %v, want ErrTooManyIDs", err)
 	}
 }
 
 func TestGetBeatmapsEmptySkipsRequest(t *testing.T) {
 	c := clientWith(failRoundTrip{t})
-	got, err := c.GetBeatmaps(&GuestToken{}, nil)
+	got, err := c.GetBeatmaps(nil)
 	if err != nil || got != nil {
 		t.Fatalf("GetBeatmaps(nil) = %v, %v; want nil, nil", got, err)
 	}
@@ -108,7 +116,7 @@ func TestGetBeatmapsEmptySkipsRequest(t *testing.T) {
 
 func TestGetBeatmapsDecodesSet(t *testing.T) {
 	rt := &roundTripFunc{body: `{"beatmaps":[{"id":5,"max_combo":600,"beatmapset":{"id":3,"title":"t"}}]}`}
-	got, err := clientWith(rt).GetBeatmaps(&GuestToken{}, []int64{5})
+	got, err := clientWith(rt).GetBeatmaps([]int64{5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +130,7 @@ func TestGetBeatmapsDecodesSet(t *testing.T) {
 
 func TestGetOwnUserHitsMeEndpoint(t *testing.T) {
 	rt := &roundTripFunc{body: `{"id":5,"username":"me"}`}
-	user, err := clientWith(rt).GetOwnUser(&ResourceToken{TokenType: "Bearer", AccessToken: "at"})
+	user, err := resourceClientWith(rt).GetOwnUser()
 	if err != nil {
 		t.Fatal(err)
 	}
