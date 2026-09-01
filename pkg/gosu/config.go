@@ -6,7 +6,4 @@ const (
 	ApiV2    = BaseURL + "/api/v2"
 )
 
-const (
-	authHeader = "Authorization"
-	mimeJSON   = "application/json"
-)
+const authHeader = "Authorization"
