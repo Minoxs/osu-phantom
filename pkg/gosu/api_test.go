@@ -119,3 +119,17 @@ func TestGetBeatmapsDecodesSet(t *testing.T) {
 		t.Fatalf("set = %+v, want id 3 title t", got[0].Beatmapset)
 	}
 }
+
+func TestGetOwnUserHitsMeEndpoint(t *testing.T) {
+	rt := &roundTripFunc{body: `{"id":5,"username":"me"}`}
+	user, err := clientWith(rt).GetOwnUser(&ResourceToken{TokenType: "Bearer", AccessToken: "at"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.ID != 5 {
+		t.Errorf("id = %d, want 5", user.ID)
+	}
+	if !strings.HasSuffix(rt.lastURL, "me/osu") {
+		t.Errorf("requested %s, want me/osu", rt.lastURL)
+	}
+}

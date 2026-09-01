@@ -1,11 +1,9 @@
 package gosu
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -53,45 +51,12 @@ func APIv2URL(endpoint string) string {
 	return fmt.Sprintf("%s/%s", ApiV2, endpoint)
 }
 
-func createRequestBody(i any) io.Reader {
-	data, err := json.Marshal(i)
-	if err != nil {
-		panic(err)
-	}
-	return bytes.NewBuffer(data)
-}
-
-func (c *Client) GetGuestToken(creds Credentials) (*GuestToken, error) {
-	body := AuthGrant{
-		ClientID:     creds.ClientID,
-		ClientSecret: creds.ClientSecret,
-		GrantType:    "client_credentials",
-		Scope:        "public",
-	}
-	req, err := http.NewRequest(http.MethodPost, buildOAUTHUrl("token"), createRequestBody(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", mimeJSON)
-	r, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Body.Close()
-
-	if r.StatusCode != 200 {
-		return nil, errors.New("status_code=" + r.Status)
-	}
-
-	res := &GuestToken{}
-	return res, json.NewDecoder(r.Body).Decode(res)
-}
-
-func (c *Client) GetUserID(token *GuestToken, username string) (int64, error) {
+// GetUserID resolves a username to its osu! user id.
+func (c *Client) GetUserID(token Token, username string) (int64, error) {
 	endpoint := fmt.Sprintf("users/%s/osu/?key=username", username)
 
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
-	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
+	req.Header.Add(authHeader, token.Authorization())
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -127,9 +92,9 @@ func decodeUserExtended(res *http.Response) (*UserExtended, error) {
 
 // GetUser fetches a full osu!standard profile by user id. Returns ErrUserNotFound
 // when no user carries that id.
-func (c *Client) GetUser(token *GuestToken, id int64) (*UserExtended, error) {
+func (c *Client) GetUser(token Token, id int64) (*UserExtended, error) {
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(fmt.Sprintf("users/%d/osu", id)), nil)
-	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
+	req.Header.Add(authHeader, token.Authorization())
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -141,9 +106,24 @@ func (c *Client) GetUser(token *GuestToken, id int64) (*UserExtended, error) {
 
 // GetUserByName fetches a full osu!standard profile by username. Returns
 // ErrUserNotFound when no user carries that name.
-func (c *Client) GetUserByName(token *GuestToken, username string) (*UserExtended, error) {
+func (c *Client) GetUserByName(token Token, username string) (*UserExtended, error) {
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(fmt.Sprintf("users/%s/osu?key=username", username)), nil)
-	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
+	req.Header.Add(authHeader, token.Authorization())
+	req.Header.Add(apiVersionHeader, APIVersion)
+
+	res, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return decodeUserExtended(res)
+}
+
+// GetOwnUser fetches the osu!standard profile of the user the resource token
+// belongs to. It takes a *ResourceToken, not the Token interface, because a guest
+// token cannot reach the me endpoint.
+func (c *Client) GetOwnUser(token *ResourceToken) (*UserExtended, error) {
+	req, _ := http.NewRequest(http.MethodGet, APIv2URL("me/osu"), nil)
+	req.Header.Add(authHeader, token.Authorization())
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -156,11 +136,11 @@ func (c *Client) GetUserByName(token *GuestToken, username string) (*UserExtende
 // GetRecentScores fetches one page of a user's recent osu!standard scores,
 // newest first. limit is capped at 100 by the osu! API; offset pages past the
 // newest results.
-func (c *Client) GetRecentScores(token *GuestToken, userid int64, limit, offset int) FullScores {
+func (c *Client) GetRecentScores(token Token, userid int64, limit, offset int) FullScores {
 	endpoint := fmt.Sprintf("users/%d/scores/recent/?mode=osu&limit=%d&offset=%d", userid, limit, offset)
 
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
-	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
+	req.Header.Add(authHeader, token.Authorization())
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -185,14 +165,14 @@ func (c *Client) GetRecentScores(token *GuestToken, userid int64, limit, offset 
 // cursor_string from a previous page, or empty for the newest page; the returned
 // cursor_string fetches the scores newer than this page. Scores carry no embedded
 // beatmap, only a beatmap_id.
-func (c *Client) GetScores(token *GuestToken, ruleset, cursor string) (Scores, string, error) {
+func (c *Client) GetScores(token Token, ruleset, cursor string) (Scores, string, error) {
 	endpoint := "scores?ruleset=" + ruleset
 	if cursor != "" {
 		endpoint += "&cursor_string=" + cursor
 	}
 
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
-	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
+	req.Header.Add(authHeader, token.Authorization())
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -215,11 +195,12 @@ func (c *Client) GetScores(token *GuestToken, ruleset, cursor string) (Scores, s
 	return page.Scores, page.CursorString, nil
 }
 
-func (c *Client) GetBeatmapScores(token *GuestToken, userID int64, beatmapID int64) FullScores {
+// GetBeatmapScores fetches all of a user's osu!standard scores on one beatmap.
+func (c *Client) GetBeatmapScores(token Token, userID int64, beatmapID int64) FullScores {
 	endpoint := fmt.Sprintf("beatmaps/%d/scores/users/%d/all", beatmapID, userID)
 
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
-	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
+	req.Header.Add(authHeader, token.Authorization())
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -245,9 +226,9 @@ func (c *Client) GetBeatmapScores(token *GuestToken, userID int64, beatmapID int
 // owning beatmapset in the response, so both are returned: the map for its status
 // and difficulty, the set for its title, artist, and cover art. Unlike the beatmap
 // embedded in a score, this response carries a real max_combo.
-func (c *Client) GetBeatmap(token *GuestToken, id int64) (BeatmapExtended, Beatmapset, error) {
+func (c *Client) GetBeatmap(token Token, id int64) (BeatmapExtended, Beatmapset, error) {
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(fmt.Sprintf("beatmaps/%d", id)), nil)
-	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
+	req.Header.Add(authHeader, token.Authorization())
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -276,7 +257,7 @@ func (c *Client) GetBeatmap(token *GuestToken, id int64) (BeatmapExtended, Beatm
 // onto Statistics. It carries less than the single-user endpoint: it omits country
 // rank entirely, so Statistics.CountryRank and Rank stay nil and a caller that needs
 // country rank must fetch that user singly.
-func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*User, error) {
+func (c *Client) GetUsers(token Token, ids []int64) ([]*User, error) {
 	if len(ids) > maxBulkIDs {
 		return nil, ErrTooManyIDs
 	}
@@ -285,7 +266,7 @@ func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*User, error) {
 	}
 
 	req, _ := http.NewRequest(http.MethodGet, bulkIDsURL("users", ids), nil)
-	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
+	req.Header.Add(authHeader, token.Authorization())
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
@@ -326,7 +307,7 @@ func (c *Client) GetUsers(token *GuestToken, ids []int64) ([]*User, error) {
 // passed, and nil for an empty list without calling the API. osu! returns only the
 // ids it finds, so the result may be shorter than ids and in any order; callers key
 // it by beatmap id.
-func (c *Client) GetBeatmaps(token *GuestToken, ids []int64) ([]FullBeatmap, error) {
+func (c *Client) GetBeatmaps(token Token, ids []int64) ([]FullBeatmap, error) {
 	if len(ids) > maxBulkIDs {
 		return nil, ErrTooManyIDs
 	}
@@ -335,7 +316,7 @@ func (c *Client) GetBeatmaps(token *GuestToken, ids []int64) ([]FullBeatmap, err
 	}
 
 	req, _ := http.NewRequest(http.MethodGet, bulkIDsURL("beatmaps", ids), nil)
-	req.Header.Add(authHeader, createHeader(token.TokenType, token.AccessToken))
+	req.Header.Add(authHeader, token.Authorization())
 	req.Header.Add(apiVersionHeader, APIVersion)
 
 	res, err := c.http.Do(req)
