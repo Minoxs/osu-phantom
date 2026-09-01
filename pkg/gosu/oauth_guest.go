@@ -1,9 +1,8 @@
 package gosu
 
 import (
+	"sync"
 	"time"
-
-	"github.com/minoxs/gosu-api/internal/oauth"
 )
 
 // GuestToken is the client-credentials result. It has no resource owner and no
@@ -19,13 +18,53 @@ func (t *GuestToken) Authorization() string { return createHeader(t.TokenType, t
 func (t *GuestToken) ExpiresAt() time.Time  { return expiresAt(t.ObtainedAt, t.ExpiresIn) }
 func (t *GuestToken) Expired() bool         { return !time.Now().Before(t.ExpiresAt()) }
 
-// GetGuestToken runs the client-credentials grant, yielding a token with no
-// resource owner. It is the token the read endpoints use.
-func (c *Client) GetGuestToken(creds Credentials) (*GuestToken, error) {
-	token := &GuestToken{}
-	if err := oauth.ClientCredentials(c.http, buildOAUTHUrl("token"), app(creds), "public", token); err != nil {
+// GuestTokenProvider is a TokenSource backed by the client-credentials grant. It caches the
+// token and re-runs the grant once the cached one nears expiry.
+type GuestTokenProvider struct {
+	oauth *OAuth
+
+	mu  sync.Mutex
+	tok *GuestToken
+}
+
+func NewGuestTokenProvider(o *OAuth) *GuestTokenProvider {
+	return &GuestTokenProvider{oauth: o}
+}
+
+func (p *GuestTokenProvider) Token() (Token, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.tok != nil && !stale(p.tok) {
+		return p.tok, nil
+	}
+	tok, err := p.oauth.Guest()
+	if err != nil {
 		return nil, err
 	}
-	token.ObtainedAt = time.Now()
-	return token, nil
+	p.tok = tok
+	return p.tok, nil
+}
+
+// StaticTokenProvider is a TokenSource holding a token the caller manages. SetToken replaces
+// it without rebuilding the client; it never refreshes on its own.
+type StaticTokenProvider struct {
+	mu  sync.RWMutex
+	tok Token
+}
+
+func NewStaticTokenProvider(tok Token) *StaticTokenProvider {
+	return &StaticTokenProvider{tok: tok}
+}
+
+func (p *StaticTokenProvider) Token() (Token, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.tok, nil
+}
+
+func (p *StaticTokenProvider) SetToken(tok Token) {
+	p.mu.Lock()
+	p.tok = tok
+	p.mu.Unlock()
 }

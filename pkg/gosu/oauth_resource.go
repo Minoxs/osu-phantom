@@ -1,10 +1,13 @@
 package gosu
 
 import (
+	"errors"
+	"sync"
 	"time"
-
-	"github.com/minoxs/gosu-api/internal/oauth"
 )
+
+// ErrNoResourceToken is returned by a resource source asked for a token it does not hold.
+var ErrNoResourceToken = errors.New("no resource token to refresh")
 
 // ResourceToken is the authorization-code result, attached to a logged-in user.
 // It carries a refresh token the refresh grant rotates.
@@ -20,25 +23,57 @@ func (t *ResourceToken) Authorization() string { return createHeader(t.TokenType
 func (t *ResourceToken) ExpiresAt() time.Time  { return expiresAt(t.ObtainedAt, t.ExpiresIn) }
 func (t *ResourceToken) Expired() bool         { return !time.Now().Before(t.ExpiresAt()) }
 
-// ExchangeCode trades the code osu! sent to the redirect for a user token. The
-// redirectURI must match the one AuthorizeURL was built with.
-func (c *Client) ExchangeCode(creds Credentials, code, redirectURI string) (*ResourceToken, error) {
-	token := &ResourceToken{}
-	if err := oauth.AuthorizationCode(c.http, buildOAUTHUrl("token"), app(creds), code, redirectURI, token); err != nil {
-		return nil, err
-	}
-	token.ObtainedAt = time.Now()
-	return token, nil
+// ResourceOwnerTokenProvider is a ResourceOwnerSource backed by the refresh grant. It holds
+// the token from an exchange and, once it nears expiry, refreshes it, storing the rotated
+// refresh token osu! returns.
+type ResourceOwnerTokenProvider struct {
+	oauth *OAuth
+
+	mu  sync.Mutex
+	tok *ResourceToken
 }
 
-// RefreshToken trades a user token's refresh token for a fresh one. osu! rotates
-// the refresh token, so the returned token carries a new one to store; the input
-// is left untouched.
-func (c *Client) RefreshToken(creds Credentials, token *ResourceToken) (*ResourceToken, error) {
-	refreshed := &ResourceToken{}
-	if err := oauth.Refresh(c.http, buildOAUTHUrl("token"), app(creds), token.RefreshToken, refreshed); err != nil {
+func NewResourceOwnerTokenProvider(o *OAuth, initial *ResourceToken) *ResourceOwnerTokenProvider {
+	return &ResourceOwnerTokenProvider{oauth: o, tok: initial}
+}
+
+func (p *ResourceOwnerTokenProvider) ResourceToken() (*ResourceToken, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.tok == nil {
+		return nil, ErrNoResourceToken
+	}
+	if !stale(p.tok) {
+		return p.tok, nil
+	}
+	refreshed, err := p.oauth.Refresh(p.tok.RefreshToken)
+	if err != nil {
 		return nil, err
 	}
-	refreshed.ObtainedAt = time.Now()
-	return refreshed, nil
+	p.tok = refreshed
+	return p.tok, nil
+}
+
+// StaticResourceOwnerTokenProvider is a ResourceOwnerSource holding a token the caller
+// manages. SetToken replaces it without rebuilding the client; it never refreshes on its own.
+type StaticResourceOwnerTokenProvider struct {
+	mu  sync.RWMutex
+	tok *ResourceToken
+}
+
+func NewStaticResourceOwnerTokenProvider(tok *ResourceToken) *StaticResourceOwnerTokenProvider {
+	return &StaticResourceOwnerTokenProvider{tok: tok}
+}
+
+func (p *StaticResourceOwnerTokenProvider) ResourceToken() (*ResourceToken, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.tok, nil
+}
+
+func (p *StaticResourceOwnerTokenProvider) SetToken(tok *ResourceToken) {
+	p.mu.Lock()
+	p.tok = tok
+	p.mu.Unlock()
 }

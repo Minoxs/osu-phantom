@@ -28,9 +28,9 @@ func TestGuestTokenExpiry(t *testing.T) {
 	}
 }
 
-func TestGetGuestTokenStampsObtainedAt(t *testing.T) {
+func TestOAuthGuestStampsObtainedAt(t *testing.T) {
 	rt := &roundTripFunc{body: `{"token_type":"Bearer","expires_in":86400,"access_token":"at"}`}
-	tok, err := clientWith(rt).GetGuestToken(Credentials{ClientID: 1, ClientSecret: "s"})
+	tok, err := oauthWith(rt).Guest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,5 +42,34 @@ func TestGetGuestTokenStampsObtainedAt(t *testing.T) {
 	}
 	if !strings.HasSuffix(rt.lastURL, "/oauth/token") {
 		t.Errorf("posted to %s, want /oauth/token", rt.lastURL)
+	}
+}
+
+// TestGuestTokenProviderCaches verifies a fresh cached token is reused rather than refetched.
+func TestGuestTokenProviderCaches(t *testing.T) {
+	rt := &roundTripFunc{body: `{"token_type":"Bearer","expires_in":86400,"access_token":"at"}`}
+	p := NewGuestTokenProvider(oauthWith(rt))
+
+	if _, err := p.Token(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Token(); err != nil {
+		t.Fatal(err)
+	}
+	if rt.calls != 1 {
+		t.Errorf("grant calls = %d, want 1 (second Token cached)", rt.calls)
+	}
+}
+
+func TestStaticTokenProviderSetToken(t *testing.T) {
+	p := NewStaticTokenProvider(&GuestToken{TokenType: "Bearer", AccessToken: "first"})
+	got, _ := p.Token()
+	if got.Authorization() != "Bearer first" {
+		t.Errorf("first token = %q", got.Authorization())
+	}
+	p.SetToken(&GuestToken{TokenType: "Bearer", AccessToken: "second"})
+	got, _ = p.Token()
+	if got.Authorization() != "Bearer second" {
+		t.Errorf("after SetToken = %q, want Bearer second", got.Authorization())
 	}
 }
