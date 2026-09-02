@@ -43,10 +43,10 @@ func (h *waiterHeap) Pop() any {
 
 // RateLimiter schedules dispatch slots to keep traffic under the osu! ceiling. It grants
 // one slot per interval to the highest-priority waiter. Share one to hold a single ceiling
-// across every client and token fetch under an OAuth app.
+// across every client and token fetch under an OAuth app. Its granting goroutine runs only
+// while work is queued and exits once idle, so an unused limiter parks nothing.
 type RateLimiter struct {
 	mu       sync.Mutex
-	cond     *sync.Cond
 	queue    waiterHeap
 	seq      uint64
 	interval time.Duration
@@ -56,9 +56,7 @@ type RateLimiter struct {
 // NewRateLimiter builds a limiter pacing to perMinute per minute. A non-positive perMinute
 // uses the osu! ceiling.
 func NewRateLimiter(perMinute int) *RateLimiter {
-	l := &RateLimiter{interval: rateInterval(perMinute)}
-	l.cond = sync.NewCond(&l.mu)
-	return l
+	return &RateLimiter{interval: rateInterval(perMinute)}
 }
 
 func rateInterval(perMinute int) time.Duration {
@@ -87,7 +85,6 @@ func (l *RateLimiter) Reserve(ctx context.Context, prio Priority) error {
 	w.seq = l.seq
 	l.seq++
 	heap.Push(&l.queue, w)
-	l.cond.Signal()
 	l.mu.Unlock()
 
 	select {
@@ -98,16 +95,19 @@ func (l *RateLimiter) Reserve(ctx context.Context, prio Priority) error {
 	}
 }
 
-// run grants one waiter per interval, highest priority first.
+// run grants one waiter per interval, highest priority first, exiting once the queue drains
+// so an idle limiter parks no goroutine. Reserve restarts it.
 func (l *RateLimiter) run() {
 	for {
 		l.mu.Lock()
-		for l.queue.Len() == 0 {
-			l.cond.Wait()
+		if l.queue.Len() == 0 {
+			l.started = false
+			l.mu.Unlock()
+			return
 		}
 		w := heap.Pop(&l.queue).(*waiter)
 		interval := l.interval
-		l.mu.Unlock()
+		l.mu.Unlock() // before the sleep, or every reserve blocks a full interval
 
 		close(w.ready)
 		time.Sleep(interval)

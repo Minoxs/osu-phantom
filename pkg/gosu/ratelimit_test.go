@@ -95,3 +95,33 @@ func TestPacerReserveHonorsContext(t *testing.T) {
 		t.Error("reserve with cancelled context returned nil, want context error")
 	}
 }
+
+// TestPacerExitsWhenIdle verifies the granting goroutine stops once the queue drains, so an
+// idle limiter parks nothing, and that a later reserve starts it again.
+func TestPacerExitsWhenIdle(t *testing.T) {
+	l := NewRateLimiter(6000) // 10ms between slots
+
+	if err := l.Reserve(context.Background(), 0); err != nil {
+		t.Fatalf("first reserve: %v", err)
+	}
+
+	idle := func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return !l.started
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if idle() {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !idle() {
+		t.Fatal("granting goroutine still running after the queue drained")
+	}
+
+	if err := l.Reserve(context.Background(), 0); err != nil {
+		t.Fatalf("reserve after idle exit: %v", err)
+	}
+}
