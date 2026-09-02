@@ -11,12 +11,33 @@ go get github.com/minoxs/gosu-api
 ## Usage
 
 ```go
-var c = gosu.NewClient()
+var c = gosu.NewClient(gosu.Credentials{ClientID: id, ClientSecret: secret})
 
-var token, err = c.GetGuestToken(gosu.Credentials{ClientID: id, ClientSecret: secret})
+// Check if the credentials are valid
+if err := c.Validate(); err != nil { log.Fatal(err) }
+
+// Request away :)
+var user, err = c.GetUserByName("peppy")
+if err != nil { return err }
+```
+
+### OAuth
+
+User-scoped endpoints need a resource-owner token. Send the user to the authorize URL, exchange the code osu! returns for a token, then build a `ResourceClient`.
+
+```go
+var o = gosu.NewOAuth(gosu.Credentials{ClientID: id, ClientSecret: secret})
+
+var url = o.AuthorizeURL(redirectURI, []gosu.Scope{gosu.ScopeIdentify}, csrf)
+// send the user to url, receive code on the redirect
+
+var token, err = o.Exchange(code, redirectURI)
 if err != nil { return err }
 
-var user, _ = c.GetUserByName(token, "peppy")
+var src = gosu.NewResourceOwnerTokenProvider(o, token)
+var rc = gosu.NewResourceClient(gosu.NewRateLimiter(60), 0, src)
+
+var me, _ = rc.GetOwnUser()
 ```
 
 ## Rate limiting
@@ -31,11 +52,12 @@ You can create multiple clients being fed from the same limiter and separate req
 Requests with higher priority will be answered first, but never exceeding the configured limit.
 
 ```go
-var limiter = gosu.NewRateLimiter(nil, 60)
+var limiter = gosu.NewRateLimiter(60)
+var src = gosu.NewGuestTokenProvider(creds)
 
 // Requests sent via the high client will be answered first
-var high = gosu.NewClientWith(limiter, 1)
-var low = gosu.NewClientWith(limiter, 0)
+var high = gosu.NewClientWith(limiter, 1, src)
+var low = gosu.NewClientWith(limiter, 0, src)
 // Multiple requests on the same client will be queued in order
 ```
 
@@ -45,12 +67,12 @@ var low = gosu.NewClientWith(limiter, 0)
 
 I am building this on a best-effort basis mostly to get what I need done first. If some endpoint is missing and you'd like it covered, feel free to send a PR or file an issue.
 
-| Section      | Support                            |
-|--------------|------------------------------------|
-| OAuth Tokens | Client credentials grant.          |
-| Users        | Fetch user data and recent scores. |
-| Beatmaps     | Fetch beatmap metadata.            |
-| Scores       | Fetch recent scores.               |
+| Section      | Support                                                     |
+|--------------|-------------------------------------------------------------|
+| OAuth Tokens | Client credentials, authorization code, and refresh grants. |
+| Users        | Fetch user data and recent scores.                          |
+| Beatmaps     | Fetch beatmap metadata.                                     |
+| Scores       | Fetch recent scores.                                        |
 
 **osu!standard only.**
 
