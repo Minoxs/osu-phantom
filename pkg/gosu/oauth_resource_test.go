@@ -1,6 +1,7 @@
 package gosu
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -28,9 +29,9 @@ func TestResourceTokenExpiry(t *testing.T) {
 	}
 }
 
-func TestExchangeCode(t *testing.T) {
+func TestOAuthExchange(t *testing.T) {
 	rt := &roundTripFunc{body: `{"token_type":"Bearer","expires_in":86400,"access_token":"at","refresh_token":"rt"}`}
-	tok, err := clientWith(rt).ExchangeCode(Credentials{ClientID: 1, ClientSecret: "s"}, "code", "https://app/cb")
+	tok, err := oauthWith(rt).Exchange("code", "https://app/cb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,17 +46,61 @@ func TestExchangeCode(t *testing.T) {
 	}
 }
 
-func TestRefreshTokenLeavesInputUntouched(t *testing.T) {
+func TestOAuthRefresh(t *testing.T) {
 	rt := &roundTripFunc{body: `{"token_type":"Bearer","expires_in":86400,"access_token":"new","refresh_token":"rotated"}`}
-	old := &ResourceToken{AccessToken: "old", RefreshToken: "original"}
-	got, err := clientWith(rt).RefreshToken(Credentials{ClientID: 1, ClientSecret: "s"}, old)
+	tok, err := oauthWith(rt).Refresh("original")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RefreshToken != "rotated" || got.AccessToken != "new" {
+	if tok.AccessToken != "new" || tok.RefreshToken != "rotated" {
+		t.Errorf("token = %+v, want access new, refresh rotated", tok)
+	}
+}
+
+// TestResourceOwnerTokenProviderRefreshesWhenStale verifies a stale token is refreshed and
+// the rotated refresh token stored.
+func TestResourceOwnerTokenProviderRefreshesWhenStale(t *testing.T) {
+	rt := &roundTripFunc{body: `{"token_type":"Bearer","expires_in":86400,"access_token":"new","refresh_token":"rotated"}`}
+	initial := &ResourceToken{AccessToken: "old", RefreshToken: "original", ExpiresIn: 3600, ObtainedAt: time.Now().Add(-2 * time.Hour)}
+	p := NewResourceOwnerTokenProvider(oauthWith(rt), initial)
+
+	got, err := p.ResourceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AccessToken != "new" || got.RefreshToken != "rotated" {
 		t.Errorf("refreshed = %+v, want access new, refresh rotated", got)
 	}
-	if old.RefreshToken != "original" {
-		t.Errorf("input mutated, RefreshToken = %q, want original", old.RefreshToken)
+	if rt.calls != 1 {
+		t.Errorf("grant calls = %d, want 1", rt.calls)
+	}
+
+	// The refreshed token is fresh, so a second read is cached.
+	if _, err := p.ResourceToken(); err != nil {
+		t.Fatal(err)
+	}
+	if rt.calls != 1 {
+		t.Errorf("grant calls = %d after cached read, want 1", rt.calls)
+	}
+}
+
+func TestResourceOwnerTokenProviderNoToken(t *testing.T) {
+	rt := &roundTripFunc{}
+	p := NewResourceOwnerTokenProvider(oauthWith(rt), nil)
+	if _, err := p.ResourceToken(); !errors.Is(err, ErrNoResourceToken) {
+		t.Errorf("err = %v, want ErrNoResourceToken", err)
+	}
+}
+
+func TestStaticResourceOwnerTokenProviderSetToken(t *testing.T) {
+	p := NewStaticResourceOwnerTokenProvider(&ResourceToken{AccessToken: "first"})
+	got, _ := p.ResourceToken()
+	if got.AccessToken != "first" {
+		t.Errorf("first token = %q, want first", got.AccessToken)
+	}
+	p.SetToken(&ResourceToken{AccessToken: "second"})
+	got, _ = p.ResourceToken()
+	if got.AccessToken != "second" {
+		t.Errorf("after SetToken = %q, want second", got.AccessToken)
 	}
 }

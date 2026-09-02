@@ -7,7 +7,8 @@ import (
 )
 
 func TestAuthorizeURL(t *testing.T) {
-	raw := AuthorizeURL(123, "https://app/cb", []Scope{ScopePublic, ScopeIdentify}, "csrf")
+	o := NewOAuth(Credentials{ClientID: 123})
+	raw := o.AuthorizeURL("https://app/cb", []Scope{ScopePublic, ScopeIdentify}, "csrf")
 	u, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -30,8 +31,14 @@ func TestAuthorizeURL(t *testing.T) {
 }
 
 func TestAuthorizeURLOmitsEmptyState(t *testing.T) {
-	raw := AuthorizeURL(1, "https://app/cb", []Scope{ScopePublic}, "")
+	o := NewOAuth(Credentials{ClientID: 1})
+	raw := o.AuthorizeURL("https://app/cb", []Scope{ScopePublic}, "")
 	if strings.Contains(raw, "state=") {
 		t.Errorf("url %q carries a state param for empty state", raw)
 	}
+}
+
+// oauthWith builds an OAuth whose grant calls go through rt.
+func oauthWith(rt *roundTripFunc) *OAuth {
+	return NewOAuth(Credentials{ClientID: 1, ClientSecret: "s"}, WithTransport(rt))
 }
