@@ -8,13 +8,21 @@ import (
 // Client calls the osu! API v2. Auth and pacing live in its transport, so its methods only
 // build and decode; a Client is only as paced as the limiter behind it.
 type Client struct {
-	http *http.Client
+	http  *http.Client
+	token func() (Token, error)
 }
 
 func newClient(l *RateLimiter, prio Priority, token func() (Token, error), opts []Option) *Client {
 	cfg := buildConfig(opts)
 	tr := &transport{limiter: l, prio: prio, token: token, base: cfg.base}
-	return &Client{http: &http.Client{Timeout: 30 * time.Second, Transport: tr}}
+	return &Client{http: &http.Client{Timeout: 30 * time.Second, Transport: tr}, token: token}
+}
+
+// Validate acquires the token now, so a service can fail on boot against bad credentials
+// rather than on its first request.
+func (c *Client) Validate() error {
+	_, err := c.token()
+	return err
 }
 
 // NewClient builds a Client on its own limiter paced to the osu! ceiling, fed by a guest
@@ -22,7 +30,7 @@ func newClient(l *RateLimiter, prio Priority, token func() (Token, error), opts 
 // several clients under one app must share a limiter via NewClientWith.
 func NewClient(creds Credentials, opts ...Option) *Client {
 	l := NewRateLimiter(defaultRequestsPerMinute)
-	src := NewGuestTokenProvider(NewOAuth(creds, nil, opts...))
+	src := NewGuestTokenProvider(creds, opts...)
 	return NewClientWith(l, 0, src, opts...)
 }
 

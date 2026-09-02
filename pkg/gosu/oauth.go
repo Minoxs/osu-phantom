@@ -59,18 +59,18 @@ func stale(t Token) bool {
 }
 
 // OAuth runs the osu! token grants. It is not auth-bound, so a token source can hold one to
-// acquire and refresh without the circularity of needing a Client first. A nil limiter runs
-// the grants unpaced, which osu! allows since the token endpoint is off the api/v2 ceiling;
-// pass a limiter to pace them, and the grants reserve at the top priority so a refresh is
-// not starved behind queued work that is itself blocked on it.
+// acquire and refresh without the circularity of needing a Client first. The grants run
+// unpaced by default, which osu! allows since the token endpoint is off the api/v2 ceiling;
+// WithLimiter folds them under a shared limiter at the top priority so a refresh is not
+// starved behind queued work that is itself blocked on it.
 type OAuth struct {
 	creds Credentials
 	http  *http.Client
 }
 
-func NewOAuth(creds Credentials, limiter *RateLimiter, opts ...Option) *OAuth {
+func NewOAuth(creds Credentials, opts ...Option) *OAuth {
 	cfg := buildConfig(opts)
-	tr := &transport{limiter: limiter, prio: Priority(math.MaxInt), base: cfg.base}
+	tr := &transport{limiter: cfg.limiter, prio: Priority(math.MaxInt), base: cfg.base}
 	return &OAuth{creds: creds, http: &http.Client{Timeout: 30 * time.Second, Transport: tr}}
 }
 
