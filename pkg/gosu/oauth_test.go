@@ -40,5 +40,5 @@ func TestAuthorizeURLOmitsEmptyState(t *testing.T) {
 
 // oauthWith builds an OAuth whose grant calls go through rt.
 func oauthWith(rt *roundTripFunc) *OAuth {
-	return NewOAuth(Credentials{ClientID: 1, ClientSecret: "s"}, WithTransport(rt))
+	return NewOAuth(Credentials{ClientID: 1, ClientSecret: "s"}, Transport(rt))
 }

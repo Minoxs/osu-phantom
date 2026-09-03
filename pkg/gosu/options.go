@@ -20,8 +20,8 @@ func buildConfig(opts []Option) config {
 	return cfg
 }
 
-// WithTransport sets the network transport under the pacing layer, the point a proxy, logger,
+// Transport sets the network transport under the pacing layer, the point a proxy, logger,
 // or custom TLS plugs into. It defaults to http.DefaultTransport.
-func WithTransport(base http.RoundTripper) Option {
+func Transport(base http.RoundTripper) Option {
 	return func(c *config) { c.base = base }
 }
