@@ -6,8 +6,7 @@ import "net/http"
 type Option func(*config)
 
 type config struct {
-	base    http.RoundTripper
-	limiter *RateLimiter
+	base http.RoundTripper
 }
 
 func buildConfig(opts []Option) config {
@@ -25,11 +24,4 @@ func buildConfig(opts []Option) config {
 // or custom TLS plugs into. It defaults to http.DefaultTransport.
 func WithTransport(base http.RoundTripper) Option {
 	return func(c *config) { c.base = base }
-}
-
-// WithLimiter paces the OAuth token grants through l. Grants are off the osu! api/v2 ceiling
-// and unpaced by default; set this only to fold them under a shared limiter, where they
-// reserve at the top priority so a refresh is never starved behind work blocked on it.
-func WithLimiter(l *RateLimiter) Option {
-	return func(c *config) { c.limiter = l }
 }
