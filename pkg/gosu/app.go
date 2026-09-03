@@ -24,6 +24,13 @@ func NewApp(clientID int, clientSecret string, opts ...Option) *App {
 	}
 }
 
+// Validate acquires the guest token now, so a caller can fail on boot against bad credentials
+// rather than on the first request.
+func (a *App) Validate() error {
+	_, err := a.guest.Token()
+	return err
+}
+
 // GuestClient vends a client on the app-wide guest token, reserving against the shared ceiling
 // at prio. Priority orders requests only when several clients share the app.
 func (a *App) GuestClient(prio Priority) *Client {

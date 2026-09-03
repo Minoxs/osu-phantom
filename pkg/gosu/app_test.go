@@ -62,6 +62,13 @@ func TestAppResourceOwnerClientStampsUserToken(t *testing.T) {
 	}
 }
 
+func TestAppValidateSurfacesBadCreds(t *testing.T) {
+	rt := &roundTripFunc{body: `{"error":"invalid_client"}`, status: 401}
+	if err := NewApp(1, "bad", Transport(rt)).Validate(); err == nil {
+		t.Error("Validate with rejected creds returned nil, want error")
+	}
+}
+
 func TestAppClientsShareOneLimiter(t *testing.T) {
 	app := NewApp(1, "s")
 	if app.GuestClient(0).http.Transport.(*transport).limiter != app.ResourceOwnerClient(0, &ResourceToken{}).http.Transport.(*transport).limiter {
