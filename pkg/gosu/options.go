@@ -7,6 +7,7 @@ type Option func(*config)
 
 type config struct {
 	base http.RoundTripper
+	rate int
 }
 
 func buildConfig(opts []Option) config {
@@ -24,4 +25,10 @@ func buildConfig(opts []Option) config {
 // or custom TLS plugs into. It defaults to http.DefaultTransport.
 func Transport(base http.RoundTripper) Option {
 	return func(c *config) { c.base = base }
+}
+
+// RateLimit sets the api/v2 requests-per-minute ceiling for the limiter a constructor builds.
+// A non-positive value uses the osu! ceiling.
+func RateLimit(perMinute int) Option {
+	return func(c *config) { c.rate = perMinute }
 }
