@@ -27,8 +27,8 @@ type GuestTokenProvider struct {
 	tok *GuestToken
 }
 
-func NewGuestTokenProvider(creds Credentials, opts ...Option) *GuestTokenProvider {
-	return &GuestTokenProvider{oauth: NewOAuth(creds, opts...)}
+func NewGuestTokenProvider(o *OAuth) *GuestTokenProvider {
+	return &GuestTokenProvider{oauth: o}
 }
 
 func (p *GuestTokenProvider) Token() (Token, error) {
