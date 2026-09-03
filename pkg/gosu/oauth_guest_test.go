@@ -48,7 +48,7 @@ func TestOAuthGuestStampsObtainedAt(t *testing.T) {
 // TestGuestTokenProviderCaches verifies a fresh cached token is reused rather than refetched.
 func TestGuestTokenProviderCaches(t *testing.T) {
 	rt := &roundTripFunc{body: `{"token_type":"Bearer","expires_in":86400,"access_token":"at"}`}
-	p := NewGuestTokenProvider(Credentials{ClientID: 1, ClientSecret: "s"}, WithTransport(rt))
+	p := NewGuestTokenProvider(oauthWith(rt))
 
 	if _, err := p.Token(); err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestGuestTokenProviderCaches(t *testing.T) {
 // TestClientValidateSurfacesBadCreds verifies Client.Validate returns the grant error at boot.
 func TestClientValidateSurfacesBadCreds(t *testing.T) {
 	rt := &roundTripFunc{body: `{"error":"invalid_client"}`, status: 401}
-	src := NewGuestTokenProvider(Credentials{ClientID: 1, ClientSecret: "bad"}, WithTransport(rt))
+	src := NewGuestTokenProvider(NewOAuth(Credentials{ClientID: 1, ClientSecret: "bad"}, Transport(rt)))
 	c := NewClientWith(NewRateLimiter(60), 0, src)
 
 	if err := c.Validate(); err == nil {

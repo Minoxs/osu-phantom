@@ -27,11 +27,11 @@ func (c *Client) Validate() error {
 
 // NewClient builds a Client on its own limiter paced to the osu! ceiling, fed by a guest
 // token it acquires lazily on the first request. osu! counts requests per OAuth client, so
-// several clients under one app must share a limiter via NewClientWith.
+// to hold several clients under one ceiling build an App instead.
 func NewClient(creds Credentials, opts ...Option) *Client {
-	l := NewRateLimiter(defaultRequestsPerMinute)
-	src := NewGuestTokenProvider(creds, opts...)
-	return NewClientWith(l, 0, src, opts...)
+	cfg := buildConfig(opts)
+	src := NewGuestTokenProvider(NewOAuth(creds, opts...))
+	return NewClientWith(NewRateLimiter(cfg.rate), 0, src, opts...)
 }
 
 // NewClientWith builds a Client that reserves against the shared limiter l at priority prio

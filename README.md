@@ -11,13 +11,15 @@ go get github.com/minoxs/gosu-api
 ## Usage
 
 ```go
-var c = gosu.NewClient(gosu.Credentials{ClientID: id, ClientSecret: secret})
+// Rate limit defaults to 60 req/min
+var app = gosu.NewApp(id, secret)
+// Pass gosu.RateLimit(n) and/or gosu.Transport(http) to change client behaviour
 
 // Check if the credentials are valid
-if err := c.Validate(); err != nil { log.Fatal(err) }
+if err := app.Validate(); err != nil { log.Fatal(err) }
 
 // Request away :)
-var user, err = c.GetUserByName("peppy")
+var user, err = app.GuestClient(0).GetUserByName("peppy")
 if err != nil { return err }
 ```
 
@@ -26,18 +28,15 @@ if err != nil { return err }
 User-scoped endpoints need a resource-owner token. Send the user to the authorize URL, exchange the code osu! returns for a token, then build a `ResourceClient`.
 
 ```go
-var o = gosu.NewOAuth(gosu.Credentials{ClientID: id, ClientSecret: secret})
+var app = gosu.NewApp(id, secret)
 
-var url = o.AuthorizeURL(redirectURI, []gosu.Scope{gosu.ScopeIdentify}, csrf)
-// send the user to url, receive code on the redirect
+var url = app.OAuth().AuthorizeURL(redirectURI, []gosu.Scope{gosu.ScopeIdentify}, csrf)
+// Send the user to url, receive code on the redirect
 
-var token, err = o.Exchange(code, redirectURI)
+var token, err = app.OAuth().Exchange(code, redirectURI)
 if err != nil { return err }
 
-var src = gosu.NewResourceOwnerTokenProvider(o, token)
-var rc = gosu.NewResourceClient(gosu.NewRateLimiter(60), 0, src)
-
-var me, _ = rc.GetOwnUser()
+var me, _ = app.ResourceOwnerClient(0, token).GetOwnUser()
 ```
 
 ## Rate limiting
@@ -48,20 +47,16 @@ Because of this, I decided to make rate limiting a first class citizen on this p
 > Please limit your usage to no more than 60 requests per minute (generally 1 request per second).
 > The internal rate limits are higher than this and allow some degree of bursting, but exceeding this specified limit may lead to your API tokens being revoked, or in serious abuse cases your access to the API being restricted.
 
-You can create multiple clients being fed from the same limiter and separate request priorities accordingly to make sure that your application gets the data it needs.
+I have provided `NewApp()` to abstract away all of this, exposing the request priority so you can make sure that your application gets the data it needs.
 Requests with higher priority will be answered first, but never exceeding the configured limit.
 
 ```go
-var limiter = gosu.NewRateLimiter(60)
-var src = gosu.NewGuestTokenProvider(creds)
-
-// Requests sent via the high client will be answered first
-var high = gosu.NewClientWith(limiter, 1, src)
-var low = gosu.NewClientWith(limiter, 0, src)
-// Multiple requests on the same client will be queued in order
+var high = app.GuestClient(1)
+var low = app.GuestClient(0)
 ```
 
-**You have been warned. If you use this package incorrectly and get banned from the API, you're on your own.**
+If you have some complex requirements, you can reach into the internal bits of this library to mix and match its building blocks, I am trying to make sure things can be composed cleanly.
+**However, you have been warned. If you use this package incorrectly and get banned from the API, you're on your own.**
 
 ## Coverage
 
