@@ -13,9 +13,9 @@ type App struct {
 
 // NewApp builds an app whose clients share one ceiling and one guest token. RateLimit sets
 // that ceiling, Transport the network transport beneath it.
-func NewApp(creds Credentials, opts ...Option) *App {
+func NewApp(clientID int, clientSecret string, opts ...Option) *App {
 	cfg := buildConfig(opts)
-	o := NewOAuth(creds, opts...)
+	o := NewOAuth(Credentials{ClientID: clientID, ClientSecret: clientSecret}, opts...)
 	return &App{
 		oauth:   o,
 		guest:   NewGuestTokenProvider(o),

@@ -35,7 +35,7 @@ func TestAppGuestClientStampsGuestTokenThroughTransport(t *testing.T) {
 		token: `{"token_type":"Bearer","expires_in":86400,"access_token":"guest-at"}`,
 		api:   `{"id":1,"username":"peppy"}`,
 	}
-	app := NewApp(Credentials{ClientID: 1, ClientSecret: "s"}, Transport(rt))
+	app := NewApp(1, "s", Transport(rt))
 
 	u, err := app.GuestClient(0).GetUser(1)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestAppGuestClientStampsGuestTokenThroughTransport(t *testing.T) {
 
 func TestAppResourceOwnerClientStampsUserToken(t *testing.T) {
 	rt := &dispatchRT{api: `{"id":2,"username":"me"}`}
-	app := NewApp(Credentials{ClientID: 1, ClientSecret: "s"}, Transport(rt))
+	app := NewApp(1, "s", Transport(rt))
 	tok := &ResourceToken{TokenType: "Bearer", AccessToken: "user-at", ExpiresIn: 3600, ObtainedAt: time.Now()}
 
 	if _, err := app.ResourceOwnerClient(0, tok).GetOwnUser(); err != nil {
@@ -63,7 +63,7 @@ func TestAppResourceOwnerClientStampsUserToken(t *testing.T) {
 }
 
 func TestAppClientsShareOneLimiter(t *testing.T) {
-	app := NewApp(Credentials{ClientID: 1, ClientSecret: "s"})
+	app := NewApp(1, "s")
 	if app.GuestClient(0).http.Transport.(*transport).limiter != app.ResourceOwnerClient(0, &ResourceToken{}).http.Transport.(*transport).limiter {
 		t.Error("guest and resource clients do not share the app limiter")
 	}
