@@ -2,9 +2,7 @@ package gosu
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -51,7 +49,7 @@ func APIv2URL(endpoint string) string {
 	return fmt.Sprintf("%s/%s", ApiV2, endpoint)
 }
 
-// GetUserID resolves a username to its osu! user id.
+// GetUserID resolves a username to its user id or ErrUserNotFound
 func (c *Client) GetUserID(username string) (int64, error) {
 	endpoint := fmt.Sprintf("users/%s/osu/?key=username", username)
 
@@ -62,12 +60,18 @@ func (c *Client) GetUserID(username string) (int64, error) {
 	}
 	defer res.Body.Close()
 
+	if res.StatusCode == 404 {
+		return 0, ErrUserNotFound
+	}
+	if res.StatusCode != 200 {
+		return 0, &StatusError{Code: res.StatusCode, Status: res.Status}
+	}
+
 	body := &User{}
-	err = json.NewDecoder(res.Body).Decode(body)
-	if err != nil {
+	if err := json.NewDecoder(res.Body).Decode(body); err != nil {
 		return 0, err
 	}
-	return body.ID, err
+	return body.ID, nil
 }
 
 func decodeUserExtended(res *http.Response) (*UserExtended, error) {
@@ -77,7 +81,7 @@ func decodeUserExtended(res *http.Response) (*UserExtended, error) {
 		return nil, ErrUserNotFound
 	}
 	if res.StatusCode != 200 {
-		return nil, errors.New("status_code=" + res.Status)
+		return nil, &StatusError{Code: res.StatusCode, Status: res.Status}
 	}
 
 	user := &UserExtended{}
@@ -87,8 +91,7 @@ func decodeUserExtended(res *http.Response) (*UserExtended, error) {
 	return user, nil
 }
 
-// GetUser fetches a full osu!standard profile by user id. Returns ErrUserNotFound
-// when no user carries that id.
+// GetUser fetches a profile by user id or ErrUserNotFound
 func (c *Client) GetUser(id int64) (*UserExtended, error) {
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(fmt.Sprintf("users/%d/osu", id)), nil)
 	res, err := c.http.Do(req)
@@ -98,8 +101,7 @@ func (c *Client) GetUser(id int64) (*UserExtended, error) {
 	return decodeUserExtended(res)
 }
 
-// GetUserByName fetches a full osu!standard profile by username. Returns
-// ErrUserNotFound when no user carries that name.
+// GetUserByName fetches a profile by username or ErrUserNotFound
 func (c *Client) GetUserByName(username string) (*UserExtended, error) {
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(fmt.Sprintf("users/%s/osu?key=username", username)), nil)
 	res, err := c.http.Do(req)
@@ -109,35 +111,31 @@ func (c *Client) GetUserByName(username string) (*UserExtended, error) {
 	return decodeUserExtended(res)
 }
 
-// GetRecentScores fetches one page of a user's recent osu!standard scores,
-// newest first. limit is capped at 100 by the osu! API; offset pages past the
-// newest results.
-func (c *Client) GetRecentScores(userid int64, limit, offset int) FullScores {
+// GetRecentScores fetches one page of a user's recent scores newest first
+func (c *Client) GetRecentScores(userid int64, limit, offset int) (FullScores, error) {
 	endpoint := fmt.Sprintf("users/%d/scores/recent/?mode=osu&limit=%d&offset=%d", userid, limit, offset)
 
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
 	res, err := c.http.Do(req)
 	if err != nil {
-		slog.Error("Error while sending request", "Error", err)
-		return nil
+		return nil, err
 	}
 	defer res.Body.Close()
 
-	scores := make(FullScores, 0)
-	err = json.NewDecoder(res.Body).Decode(&scores)
-	if err != nil {
-		slog.Error("Error while decoding response", "Error", err)
-		return nil
+	if res.StatusCode != 200 {
+		return nil, &StatusError{Code: res.StatusCode, Status: res.Status}
 	}
 
-	return scores
+	scores := make(FullScores, 0)
+	if err := json.NewDecoder(res.Body).Decode(&scores); err != nil {
+		return nil, err
+	}
+
+	return scores, nil
 }
 
-// GetScores fetches one page of osu!'s global recent-scores feed for a ruleset,
-// the passing scores every player has set, ascending by id. cursor is the
-// cursor_string from a previous page, or empty for the newest page; the returned
-// cursor_string fetches the scores newer than this page. Scores carry no embedded
-// beatmap, only a beatmap_id.
+// GetScores fetches one page of the ruleset's global scores feed by cursor and returns the next cursor
+// Scores carry a beatmap_id but no embedded beatmap
 func (c *Client) GetScores(ruleset, cursor string) (Scores, string, error) {
 	endpoint := "scores?ruleset=" + ruleset
 	if cursor != "" {
@@ -152,7 +150,7 @@ func (c *Client) GetScores(ruleset, cursor string) (Scores, string, error) {
 	defer res.Body.Close()
 
 	if res.StatusCode != 200 {
-		return nil, "", errors.New("status_code=" + res.Status)
+		return nil, "", &StatusError{Code: res.StatusCode, Status: res.Status}
 	}
 
 	page := struct {
@@ -165,34 +163,33 @@ func (c *Client) GetScores(ruleset, cursor string) (Scores, string, error) {
 	return page.Scores, page.CursorString, nil
 }
 
-// GetBeatmapScores fetches all of a user's osu!standard scores on one beatmap.
-func (c *Client) GetBeatmapScores(userID int64, beatmapID int64) FullScores {
+// GetBeatmapScores fetches all of a user's scores on one beatmap
+func (c *Client) GetBeatmapScores(userID int64, beatmapID int64) (FullScores, error) {
 	endpoint := fmt.Sprintf("beatmaps/%d/scores/users/%d/all", beatmapID, userID)
 
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(endpoint), nil)
 	res, err := c.http.Do(req)
 	if err != nil {
-		slog.Error("Error while sending request", "Error", err)
-		return nil
+		return nil, err
 	}
 	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		return nil, &StatusError{Code: res.StatusCode, Status: res.Status}
+	}
 
 	s := struct {
 		Scores FullScores `json:"scores"`
 	}{}
-	err = json.NewDecoder(res.Body).Decode(&s)
-	if err != nil {
-		slog.Error("Error while decoding response", "Error", err)
-		return nil
+	if err := json.NewDecoder(res.Body).Decode(&s); err != nil {
+		return nil, err
 	}
 
-	return s.Scores
+	return s.Scores, nil
 }
 
-// GetBeatmap fetches a single beatmap's metadata by id. The osu! API nests the
-// owning beatmapset in the response, so both are returned: the map for its status
-// and difficulty, the set for its title, artist, and cover art. Unlike the beatmap
-// embedded in a score, this response carries a real max_combo.
+// GetBeatmap fetches a beatmap and its owning beatmapset by id
+// Its max_combo is real unlike a score's embedded beatmap
 func (c *Client) GetBeatmap(id int64) (BeatmapExtended, Beatmapset, error) {
 	req, _ := http.NewRequest(http.MethodGet, APIv2URL(fmt.Sprintf("beatmaps/%d", id)), nil)
 	res, err := c.http.Do(req)
@@ -202,7 +199,7 @@ func (c *Client) GetBeatmap(id int64) (BeatmapExtended, Beatmapset, error) {
 	defer res.Body.Close()
 
 	if res.StatusCode != 200 {
-		return BeatmapExtended{}, Beatmapset{}, errors.New("status_code=" + res.Status)
+		return BeatmapExtended{}, Beatmapset{}, &StatusError{Code: res.StatusCode, Status: res.Status}
 	}
 
 	body := FullBeatmap{}
@@ -212,15 +209,9 @@ func (c *Client) GetBeatmap(id int64) (BeatmapExtended, Beatmapset, error) {
 	return body.BeatmapExtended, body.Beatmapset, nil
 }
 
-// GetUsers fetches osu!standard profiles for many user ids in one request. It
-// returns ErrTooManyIDs when more than maxBulkIDs ids are passed, and nil for an
-// empty list without calling the API. osu! returns only the ids it finds, so the
-// result may be shorter than ids and in any order; callers key it by profile id.
-//
-// The bulk endpoint reports ranking stats per ruleset, so the osu! stats are folded
-// onto Statistics. It carries less than the single-user endpoint: it omits country
-// rank entirely, so Statistics.CountryRank and Rank stay nil and a caller that needs
-// country rank must fetch that user singly.
+// GetUsers fetches profiles for many ids in one request keyed by id in any order
+// Returns ErrTooManyIDs above maxBulkIDs
+// The bulk endpoint omits country rank so CountryRank and Rank stay nil
 func (c *Client) GetUsers(ids []int64) ([]*User, error) {
 	if len(ids) > maxBulkIDs {
 		return nil, ErrTooManyIDs
@@ -237,7 +228,7 @@ func (c *Client) GetUsers(ids []int64) ([]*User, error) {
 	defer res.Body.Close()
 
 	if res.StatusCode != 200 {
-		return nil, errors.New("status_code=" + res.Status)
+		return nil, &StatusError{Code: res.StatusCode, Status: res.Status}
 	}
 
 	page := struct {
@@ -263,11 +254,8 @@ func (c *Client) GetUsers(ids []int64) ([]*User, error) {
 	return profiles, nil
 }
 
-// GetBeatmaps fetches beatmap metadata for many ids in one request, each with its
-// owning set embedded. It returns ErrTooManyIDs when more than maxBulkIDs ids are
-// passed, and nil for an empty list without calling the API. osu! returns only the
-// ids it finds, so the result may be shorter than ids and in any order; callers key
-// it by beatmap id.
+// GetBeatmaps fetches metadata for many beatmap ids in one request keyed by id in any order
+// Returns ErrTooManyIDs above maxBulkIDs
 func (c *Client) GetBeatmaps(ids []int64) ([]FullBeatmap, error) {
 	if len(ids) > maxBulkIDs {
 		return nil, ErrTooManyIDs
@@ -284,7 +272,7 @@ func (c *Client) GetBeatmaps(ids []int64) ([]FullBeatmap, error) {
 	defer res.Body.Close()
 
 	if res.StatusCode != 200 {
-		return nil, errors.New("status_code=" + res.Status)
+		return nil, &StatusError{Code: res.StatusCode, Status: res.Status}
 	}
 
 	page := struct {
